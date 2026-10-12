@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- learned.aiml — auto-promoted by the brain's relevance classifier. Safe to delete. -->
+<aiml version="1.0">
+<category>
+<pattern>WHEN WAS COMPUTERIZED BULLETIN BOARD SYSTEM CBBS LAUNCHED</pattern>
+<template>CBBS was launched on February 16, 1978, by Ward Christensen and Randy Suess in Chicago.</template>
+</category>
+<category>
+<pattern>WHAT WAS PEAK USAGE OF BULLETIN BOARD SYSTEM</pattern>
+<template>BBS usage peaked around 1994–1996.</template>
+</category>
+<category>
+<pattern>WHAT WAS DECLINE OF BULLETIN BOARD SYSTEM</pattern>
+<template>A rapid market collapse occurred in late 1994 to early 1995 due to internet competition.</template>
+</category>
+<category>
+<pattern>WHAT HAPPENED TO BULLETIN BOARD SYSTEM IN 2000S</pattern>
+<template>By the 2000s, most BBSes transitioned to Internet access via Telnet and SSH.</template>
+</category>
+<category>
+<pattern>WHAT IS SURVIVING SYSTEM OF BULLETIN BOARD SYSTEM</pattern>
+<template>Taiwan's PTT Bulletin Board System remains active as a notable exception to the decline.</template>
+</category>
+<category>
+<pattern>HOW DID HISTORIANS RECONSTRUCT HISTORY OF BULLETIN BOARD SYSTEM</pattern>
+<template>Historians reconstruct BBS history from mixed sources including contemporary magazines, manuals, archived message bases, and sysop recollections.</template>
+</category>
+<category>
+<pattern>WHAT SOURCES WERE USED TO RECONSTRUCT HISTORY OF BULLETIN BOARD SYSTEM</pattern>
+<template>Sources include Wikipedia, Spectrum.ieee.org, Archania.org, and Ethw.org.</template>
+</category>
+</aiml>

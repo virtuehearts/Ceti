@@ -1,0 +1,9 @@
+# CETI core dependencies.
+#
+# The brain itself is stdlib-only. This file holds the one hard
+# dependency: deterministic ECDSA on secp256k1 for signed datasets
+# (ceti/signing.py). Everything else — Ollama, llama-server, the
+# embedding model — is installed by install.sh, and every tier
+# degrades gracefully when a backend is missing.
+
+ecdsa>=0.18
