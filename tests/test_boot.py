@@ -76,8 +76,8 @@ class TestBoot(unittest.TestCase):
         rep = boot(cfg_for(make_data_dir()))
         by_name = {c.name: c for c in rep.checks}
         self.assertTrue(rep.ok)
-        self.assertEqual(by_name["aiml"].status, "ok")
-        self.assertIn("3 categories", by_name["aiml"].detail)
+        self.assertEqual(by_name["custom local AIML engine"].status, "ok")
+        self.assertIn("3 categories", by_name["custom local AIML engine"].detail)
         self.assertEqual(by_name["knowledge"].status, "ok")
         # nothing listening: services degrade, boot survives
         self.assertEqual(by_name["embeddings"].status, "warn")
@@ -97,7 +97,7 @@ class TestBoot(unittest.TestCase):
         rep = boot(cfg_for(make_data_dir(corrupt_aiml=True)))
         self.assertFalse(rep.ok)
         by_name = {c.name: c for c in rep.checks}
-        self.assertEqual(by_name["aiml"].status, "fail")
+        self.assertEqual(by_name["custom local AIML engine"].status, "fail")
 
     def test_missing_db_warns_without_creating_one(self):
         # a fresh install has no knowledge DB yet: warn, don't refuse

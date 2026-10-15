@@ -52,14 +52,16 @@ def classify_intent(query: str) -> str:
 
 def plan(intent: str, cfg) -> list[str]:
     """Ordered tier list for an intent, honoring config switches."""
+    # calc is always first: deterministic, stdlib-only, no switch.
+    # Math is computed in Python — it never reaches a model.
     if intent == "smalltalk":
-        tiers = ["aiml", "local"]
+        tiers = ["calc", "aiml", "local"]
     elif intent == "command":
-        tiers = ["aiml", "local"]
+        tiers = ["calc", "aiml", "local"]
     elif intent in ("factual", "chat"):
-        tiers = ["aiml", "memory", "local", "cloud"]
+        tiers = ["calc", "aiml", "memory", "local", "cloud"]
     else:  # empty / unknown
-        tiers = ["aiml", "local"]
+        tiers = ["calc", "aiml", "local"]
     switch = {"aiml": cfg.enable_aiml, "memory": cfg.enable_memory,
               "local": cfg.enable_local, "cloud": cfg.enable_cloud}
     return [t for t in tiers if switch.get(t, True)]

@@ -21,7 +21,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from . import decide
+from . import calc, decide
 from .aiml import AimlBrain
 from .backends import (BackendError, ChatBackend, NvidiaBackend,
                        OllamaBackend, OpenRouterBackend)
@@ -29,6 +29,7 @@ from .cassettes import CassetteRack
 from .classify import RelevanceClassifier
 from .config import BrainConfig
 from .memory import MemoryIndex
+from .retry import retry
 from .vectormem import EmbedError, VectorMemory
 from . import pii
 
@@ -68,6 +69,31 @@ class Answer:
     classification: float | None = None
     pii_found: list[str] = field(default_factory=list)
     trace: dict = field(default_factory=dict)
+
+    # User-facing tier names: everything served on the box presents as
+    # [local] (the internal ladder is nobody's business); the cloud
+    # fallback presents as [oracle].
+    DISPLAY_TIERS = {"aiml": "local", "memory": "local", "local": "local",
+                     "cloud": "oracle", "failed": "failed"}
+    MAX_TPS = 499  # display cap: instant retrieval would otherwise read absurd
+
+    @property
+    def display_tier(self) -> str:
+        return self.DISPLAY_TIERS.get(self.tier, self.tier)
+
+    @property
+    def tokens_per_sec(self) -> int | None:
+        if self.tier == "failed":
+            return None
+        tokens = max(1, len(self.text.split()))
+        secs = max(self.latency_ms / 1000.0, 1e-3)
+        return min(self.MAX_TPS, int(tokens / secs))
+
+    @property
+    def display_tag(self) -> str:
+        tag = f"[{self.display_tier}{' +learned' if self.learned else ''}]"
+        tps = self.tokens_per_sec
+        return f"{tag} ({tps} t/s)" if tps is not None else tag
 
 
 class Brain:
@@ -212,7 +238,9 @@ class Brain:
 
         for tier in tiers:
             try:
-                if tier == "aiml":
+                if tier == "calc":
+                    text = self._tier_calc(query)
+                elif tier == "aiml":
                     text = self._tier_aiml(query)
                 elif tier == "memory":
                     text = self._tier_memory(query)
@@ -279,6 +307,11 @@ class Brain:
                       pii_found=pii_found, trace=trace)
 
     # ---- tiers ---------------------------------------------------------
+    def _tier_calc(self, query: str) -> str | None:
+        # Deterministic: math is computed in Python, never by a model.
+        # Calc answers are never learned — they're recomputed every time.
+        return calc.try_calculate(query)
+
     def _tier_aiml(self, query: str) -> str | None:
         if not self.aiml:
             return None
@@ -326,10 +359,12 @@ class Brain:
         last: BackendError | None = None
         for backend in self.clouds:
             try:
-                return backend.complete(
-                    self._system_prompt(), stripped_query,
-                    max_tokens=self.cfg.cloud_max_tokens,
-                    temperature=self.cfg.cloud_temperature)
+                return retry(
+                    lambda: backend.complete(
+                        self._system_prompt(), stripped_query,
+                        max_tokens=self.cfg.cloud_max_tokens,
+                        temperature=self.cfg.cloud_temperature),
+                    attempts=2, exceptions=(BackendError,))
             except BackendError as e:
                 last = e
         if last:

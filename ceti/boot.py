@@ -23,7 +23,7 @@ from .config import BrainConfig
 from .datasets import DatasetStore
 from . import signing
 
-CORE = ("config", "persona", "aiml", "knowledge")
+CORE = ("config", "persona", "custom local AIML engine", "knowledge")
 TIMEOUT = 5
 
 
@@ -61,7 +61,7 @@ class BootReport:
         n_ok = sum(1 for c in self.checks if c.status == "ok")
         n_warn = sum(1 for c in self.checks if c.status == "warn")
         n_fail = sum(1 for c in self.checks if c.status == "fail")
-        lines = ["CETI BIOS v0.1.0 — power-on self test"]
+        lines = ["CETI BIOS v0.2.0 — power-on self test"]
         for c in self.checks:
             tag = {"ok": "  ok  ", "warn": " warn ",
                    "fail": " FAIL "}[c.status]
@@ -120,13 +120,13 @@ def check_aiml(cfg: BrainConfig) -> Check:
         try:
             root = ET.parse(p).getroot()
         except ET.ParseError as e:
-            return Check("aiml", "fail",
+            return Check("custom local AIML engine", "fail",
                          "unparseable %s: %s" % (p, e))
         total += len(root.findall("category"))
         files += 1
     if files == 0:
-        return Check("aiml", "fail", "no AIML files found")
-    return Check("aiml", "ok",
+        return Check("custom local AIML engine", "fail", "no AIML files found")
+    return Check("custom local AIML engine", "ok",
                  "%d categories across %d files (%d cassettes)"
                  % (total, files, len(rack.list())))
 

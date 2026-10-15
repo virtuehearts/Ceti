@@ -42,7 +42,7 @@ class BrainConfig:
     # ---- cloud LLMs (OpenAI-compatible) --------------------------------
     openrouter_url: str = "https://openrouter.ai/api/v1/chat/completions"
     nvidia_url: str = "https://integrate.api.nvidia.com/v1/chat/completions"
-    cloud_model: str = "qwen/qwen3-8b:free"
+    cloud_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     cloud_timeout: int = 45
     cloud_max_tokens: int = 512
     cloud_temperature: float = 0.3

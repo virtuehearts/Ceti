@@ -209,6 +209,9 @@ class Researcher:
         cmd = [self.research_python, self.research_py, topic,
                "--pages", str(self.pages),
                "--min-mem", str(self.min_mem_gb)]
+        if os.environ.get("CETI_WIKI_ONLY") == "1":
+            # single-host mode: no per-site fetch approval cards
+            cmd.append("--wiki-only")
         try:
             p = subprocess.run(cmd, capture_output=True, text=True,
                                timeout=self.timeout_s)
