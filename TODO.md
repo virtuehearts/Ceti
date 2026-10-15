@@ -59,6 +59,13 @@ keys, and the PII stripper already gates everything sent up.
 - [ ] The oracle teaches: cloud answers already flow through the
       classifier (`learn_from_cloud`) into local cassettes — verify
       this loop live once keys exist.
+- [x] Oracle-driven file editing (Jero's ask): the agent loop
+      (`/task`) lets the cloud model draft READMEs, sites, and code
+      directly into the work root through `write_file`/`edit_file`
+      — the operator watches and reviews before anything is kept.
+      Proved manually 2026-10-13: oracle-generated
+      `your_files/ceti-launch-site/index.html`. Mechanism live
+      2026-10-14.
 
 ### Torrent distribution
 State: `ceti/seeder.py` writes `.torrent` files, `seedbox/` has the
@@ -85,17 +92,60 @@ transmission-daemon setup, `seedtest.py` proved a loopback transfer.
       plugs in.
 
 ### Tool/skill system + sandbox
-- [ ] Tool registry: manifest format (name, args schema, side-effect
-      declaration, sandbox policy). Skills as markdown + code bundles
-      in `skills/`, hot-loadable like cassettes.
-- [ ] Sandbox runner: minimal QEMU microVM for coding and running
-      commands — snapshot/restore per invocation, no network by
-      default, CPU/RAM caps, 0600 scratch. The agent NEVER runs code
-      on the host; the sandbox is the only execution environment.
-- [ ] Agent loop: plan → write code → run in sandbox → observe →
-      iterate, with the transcript feeding the task log.
-- [ ] Skill curation: a `skills/` seed set (file ops, web fetch via
-      the lynx stack, sqlite queries) plus docs for writing your own.
+- [x] Tool registry: Tool class (name, description, JSON-schema
+      parameters, side-effect declaration, sandbox flag),
+      `to_openai_schema()` for oracle function calling, `execute()`
+      returning ToolResult. Tools: run_python, run_python_bg,
+      job_poll, job_kill, read_file, write_file, edit_file,
+      list_dir. Retry-with-backoff on cloud calls (ceti/retry.py).
+      Done 2026-10-14.
+- [x] Skills as markdown + code bundles in `skills/`,
+      hot-loadable like cassettes: SKILL.md with flat `key: value`
+      frontmatter (stdlib-only, no PyYAML), `name` + `description`
+      required. Discovered via `list_skills`/`read_skill` tools and
+      listed in the agent loop's system prompt. `/skills` lists,
+      `/skills reload` rescans. Bad bundles skipped loudly.
+      Reference: MiniMax Mini-Agent's SKILL.md loader (MIT).
+      Done 2026-10-14.
+- [x] Sandbox runner: pure-Python Linux namespace backend
+      (QEMU was a non-starter on this box) — ro binds, tmpfs /tmp,
+      private /work, no network, rlimits + wall-clock kill, fixed
+      remount escape. Foreground AND background jobs (poll/wait/
+      kill). The agent NEVER runs code on the host. QEMU stays a
+      future backend behind the same policy. Done 2026-10-13/14.
+- [x] Agent loop: oracle (cloud API) drives tools to complete
+      tasks — `/task <description>` in the REPL. Plan → write →
+      run in sandbox → observe → iterate, with the transcript in
+      the session log. Per-session local memory: notes.json
+      (record_note/recall_notes tools) + messages.jsonl under
+      data/sessions/<id>/. Context summarization past the token
+      limit (user messages always kept). Refuses loudly without a
+      cloud API key. Done 2026-10-14.
+- [x] Skill curation: `skills/` seed set — file-ops (the four
+      file tools + jail + verify workflow), sandbox-python (no
+      network, per-run /work, stdlib only, limits, background
+      jobs), web-fetch (honest options given no sandbox network),
+      sqlite (stdlib sqlite3 patterns). Authoring guide in
+      `docs/skills.md`. Done 2026-10-14.
+
+### Library ingest + oracle paper writer
+Done 2026-10-14 (Jero's ask — "drop a file, it's in vector memory",
+StoryBlocks-style paper writer).
+- [x] `ceti/ingest.py`: `data/library/` drop folder (.pdf via
+      pdftotext, .txt/.md); paragraph-aware chunking (~600 tokens,
+      ~120 overlap); embeddinggemma-2 embeddings; `doc_chunks`
+      table in `data/library.sqlite3` (separate from Q&A);
+      sha256 dedup; `/ingest` REPL command (+ heartbeat-ready
+      `scan()`). Restarted the embedding server (:11435) after
+      the VM replacement killed it.
+- [x] `ceti/story.py`: stories as block sequences (~200
+      words/page, retry-if-short like StoryBlocks); story bible
+      first (title, characters, arc, 12 beats); rolling chapter
+      summaries; top-k library chunks as style reference (voice
+      inspiration, never reproduced); plain files under
+      `data/stories/<id>/`; `/story new|write|status|compile|list`.
+      Proven live: bible + chapter + compile via OpenRouter.
+- [ ] Branching narratives (StoryBlocks' two-choice trees) — v2.
 
 ## Bugs found live (not yet fixed)
 
