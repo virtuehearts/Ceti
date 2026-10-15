@@ -155,6 +155,7 @@ class Brain:
                       "cloud": 0, "failed": 0, "learned": 0,
                       "memory_backend": self.memory_kind,
                       "cassettes": len(self.rack.list())}
+        self._learn_block_reason: str | None = None
 
         self._persona_text: str | None = None
         self._handled = False
@@ -270,6 +271,194 @@ class Brain:
             tier="failed", latency_ms=ms, intent=intent,
             pii_found=pii_found, trace=trace)
 
+    def stream_tokens(self, query: str, force_tier: str | None = None,
+                      learn: bool = True):
+        """Streaming version of ask(): yields ('tag', tag) then
+        ('chunk' | 'block', text) events, then ('stream_end', args).
+        Retrieval tiers yield one 'block' — the whole answer, for
+        the caller to reveal at the capped 499 t/s. Model tiers
+        yield real 'chunk' fragments as they arrive. 'heartbeat'
+        means no chunk yet (pump again). 'error' is terminal: the
+        partial text stays, no finish runs.
+        This phase touches no sqlite (no learning, no classifier,
+        no gap log, no stats) — the caller runs finish_stream(args)
+        on the main thread after the stream ends."""
+        t0 = time.monotonic()
+        trace: dict = {}
+        self._handled = False
+        self._handler_ungrounded = False
+        intent = decide.classify_intent(query)
+        tiers = ([force_tier] if force_tier
+                 else decide.plan(intent, self.cfg))
+        trace["intent"] = intent
+        trace["tiers"] = tiers
+        stripped_q, pii_found = pii.strip(query)
+        trace["pii_found"] = pii_found
+
+        def end(tier, text):
+            return {"query": query, "stripped_q": stripped_q,
+                    "text": text, "tier": tier, "intent": intent,
+                    "learn": learn, "t0": t0, "trace": trace,
+                    "pii_found": pii_found}
+
+        for tier in tiers:
+            tag = f"[{Answer.DISPLAY_TIERS.get(tier, tier)}]"
+            try:
+                if tier == "calc":
+                    text = self._tier_calc(query)
+                    if text:
+                        yield ("tag", tag)
+                        yield ("block", text)
+                        yield ("stream_end", end(tier, text))
+                        return
+                elif tier == "aiml":
+                    text = self._tier_aiml(query)
+                    if text:
+                        yield ("tag", tag)
+                        yield ("block", text)
+                        yield ("stream_end", end(tier, text))
+                        return
+                elif tier == "memory":
+                    if (yield from self._stream_memory(query, tag, end)):
+                        return
+                elif tier == "local":
+                    if not self.local:
+                        continue
+                    streamed, _err = yield from self._stream_backend(
+                        self.local, self._system_prompt(), query,
+                        tag, end, tier, self.cfg.local_max_tokens,
+                        self.cfg.local_temperature)
+                    if streamed:
+                        return
+                elif tier == "cloud":
+                    if (yield from self._stream_cloud(
+                            stripped_q or query, tag, end)):
+                        return
+            except BackendError as e:
+                trace[tier] = f"error: {e}"
+                continue
+        text = "I couldn't find or generate an answer for that."
+        yield ("tag", "[failed]")
+        yield ("block", text)
+        yield ("stream_end", end("failed", text))
+
+    def _stream_backend(self, backend, system, user, tag, end, tier,
+                        max_tokens, temperature):
+        """Stream one model call. Yields events; returns
+        (streamed, error). streamed=True when an answer streamed
+        (or a mid-stream error was yielded — terminal, the partial
+        text stays, no finish runs). streamed=False + error set
+        means a failure before the first chunk: the caller falls
+        through to the next tier."""
+        parts: list[str] = []
+        tag_sent = False
+        try:
+            for ev in backend.complete_stream(
+                    system, user, max_tokens=max_tokens,
+                    temperature=temperature):
+                if ev is None:
+                    yield ("heartbeat", None)
+                    continue
+                if not tag_sent:
+                    yield ("tag", tag)
+                    tag_sent = True
+                parts.append(ev)
+                yield ("chunk", ev)
+        except BackendError as e:
+            if not tag_sent:
+                return False, str(e)
+            yield ("error", str(e))
+            return True, None
+        if not tag_sent:
+            return False, "empty stream"
+        yield ("stream_end", end(tier, "".join(parts)))
+        return True, None
+
+    def _stream_memory(self, query, tag, end):
+        """Memory tier with handler streaming. The handler output
+        is buffered and grounding-checked before anything is
+        shown — an ungrounded handler answer must never reach the
+        screen. Returns True when an answer was yielded."""
+        if not self.memory:
+            return False
+        hits = self.memory.search(query, top_k=1)
+        floor = (self.cfg.vector_min_score
+                 if self.memory_kind == "vector"
+                 else self.cfg.memory_min_score)
+        if not hits or hits[0][3] < floor:
+            return False
+        knowledge = hits[0][1]
+        if self.cfg.handler_mode and self.local:
+            parts: list[str] = []
+            try:
+                for ev in self.local.complete_stream(
+                        self._system_prompt() + "\n\n" + HANDLER_PROMPT,
+                        "KNOWLEDGE:\n%s\n\nQUESTION: %s"
+                        % (knowledge, query),
+                        max_tokens=self.cfg.local_max_tokens,
+                        temperature=0.2):
+                    if ev is None:
+                        yield ("heartbeat", None)
+                        continue
+                    parts.append(ev)
+            except BackendError:
+                pass  # fall back to the raw retrieved text
+            presented = "".join(parts)
+            if presented:
+                if _numbers_grounded(presented, knowledge, query):
+                    self._handled = True
+                    yield ("tag", tag)
+                    yield ("block", presented)
+                    yield ("stream_end", end("memory", presented))
+                    return True
+                self._handler_ungrounded = True
+        self._handled = False
+        yield ("tag", tag)
+        yield ("block", knowledge)
+        yield ("stream_end", end("memory", knowledge))
+        return True
+
+    def _stream_cloud(self, stripped_query, tag, end):
+        """Cloud tier: up to 2 attempts per backend, like ask()'s
+        retry, then the next backend. Pre-chunk failures fall
+        through; mid-stream failures are terminal errors. Raises
+        the last error when every backend failed pre-chunk, so
+        the ladder records it in the trace."""
+        last: str | None = None
+        for backend in self.clouds:
+            for _ in range(2):
+                streamed, err = yield from self._stream_backend(
+                    backend, self._system_prompt(), stripped_query,
+                    tag, end, "cloud", self.cfg.cloud_max_tokens,
+                    self.cfg.cloud_temperature)
+                if streamed:
+                    return True
+                last = err  # pre-chunk failure: retry same backend
+        if last:
+            raise BackendError(last)
+        return False
+
+    def finish_stream(self, args) -> Answer:
+        """Main-thread finish for a completed stream: classification,
+        learning, gap log, stats. Must run on the thread that owns
+        the sqlite handles (the TUI main thread)."""
+        if args["tier"] == "failed":
+            ms = int((time.monotonic() - args["t0"]) * 1000)
+            self.stats["failed"] += 1
+            if self.gap_log is not None:
+                try:
+                    self.gap_log.note_gap(args["query"])
+                except Exception:
+                    pass  # gap logging must never break answering
+            return Answer(
+                text=args["text"], tier="failed", latency_ms=ms,
+                intent=args["intent"], pii_found=args["pii_found"],
+                trace=args["trace"])
+        return self._finish(args["query"], args["stripped_q"],
+                            args["text"], args["tier"],
+                            args["intent"], args["learn"], args["t0"],
+                            args["trace"], args["pii_found"])
+
     def _finish(self, query, stripped_q, text, tier, intent, learn,
                 t0, trace, pii_found) -> Answer:
         ms = int((time.monotonic() - t0) * 1000)
@@ -299,9 +488,30 @@ class Brain:
                     do_learn = judge
                 except BackendError as e:
                     trace["classification"]["judge_error"] = str(e)
+            # Truth gate: a relevance "promote" is not a truth
+            # verdict. Factual answers get one verification call
+            # before they enter permanent memory; a NO (or a
+            # failed judge) blocks learning, fail-closed. Serving
+            # is unchanged — the answer is still shown, only
+            # learning is gated.
+            if do_learn and intent == "factual" \
+                    and self.cfg.adjudicate_with_llm and self.local:
+                try:
+                    ok = self.classifier.verify_truth(
+                        stripped_q or query, text,
+                        lambda prompt: self.local.complete(
+                            "Reply with exactly YES or NO.", prompt,
+                            max_tokens=8, temperature=0.0))
+                    trace["truth_check"] = ok
+                    do_learn = ok
+                except BackendError as e:
+                    trace["truth_check_error"] = str(e)
+                    do_learn = False
             if do_learn:
                 learned = self._learn(stripped_q or query, text, score)
                 trace["learned"] = learned
+                if not learned and self._learn_block_reason:
+                    trace["learn_blocked"] = self._learn_block_reason
         return Answer(text=text, tier=tier, latency_ms=ms, intent=intent,
                       learned=learned, classification=score,
                       pii_found=pii_found, trace=trace)
@@ -372,8 +582,64 @@ class Brain:
         return None
 
     # ---- learning ------------------------------------------------------
+    @staticmethod
+    def _norm_text(s: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", "",
+                                          s.lower())).strip()
+
+    @classmethod
+    def _answers_conflict(cls, a: str, b: str) -> bool:
+        """True when two answers genuinely disagree. Equal answers
+        agree; an elaboration (one contains the other) agrees.
+        Everything else is a conflict — e.g. '1977' vs
+        'January 1982'."""
+        na, nb = cls._norm_text(a), cls._norm_text(b)
+        if na == nb:
+            return False
+        if len(na) >= 10 and (na in nb or nb in na):
+            return False
+        return True
+
+    def _find_conflict(self, question: str, answer: str) -> str | None:
+        """Return a description of existing knowledge that answers
+        the same question differently, or None. Checks the memory
+        store (same normalized question) and the AIML engine
+        (what it already answers for this question, cassettes
+        included). A conflict blocks learning — curated knowledge
+        is never silently overridden by a model guess."""
+        norm_q = self._norm_text(question)
+        if self.memory:
+            try:
+                for q, a, _s, _sim in self.memory.search(
+                        question, top_k=3):
+                    if (self._norm_text(q) == norm_q
+                            and self._answers_conflict(a, answer)):
+                        return f"memory already has {q!r} -> {a!r}"
+            except Exception:
+                pass  # search must never break learning
+        if self.aiml:
+            try:
+                existing = self.aiml.respond(question)
+            except Exception:
+                existing = None
+            if existing and self._answers_conflict(existing, answer):
+                return f"AIML already answers {existing!r}"
+        return None
+
     def _learn(self, question: str, answer: str, score: float) -> bool:
-        """Persist the STRIPPED pair. Returns True if it stuck."""
+        """Persist the STRIPPED pair. Returns True if it stuck.
+        A conflict with existing knowledge blocks the write and
+        files a curiosity gap, so research can resolve it."""
+        self._learn_block_reason = None
+        conflict = self._find_conflict(question, answer)
+        if conflict:
+            self._learn_block_reason = conflict
+            if self.gap_log is not None:
+                try:
+                    self.gap_log.note_gap(question)
+                except Exception:
+                    pass
+            return False
         q = " ".join(question.split())
         a = " ".join(answer.split())
         if not q or not a or len(q) > 300:

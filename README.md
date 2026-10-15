@@ -16,15 +16,17 @@ No accounts. No telemetry. No landlord. It runs on a tired laptop.
 ## Quick start
 
 ```bash
-unzip ceti-0.2.0.zip
-cd ceti-0.2.0
+unzip ceti-0.3.0.zip
+cd ceti-0.3.0
 
 ./install.sh
 source ./ceti-env.sh
 ./run.sh
 ```
 
-`install.sh` sets up the virtual environment, installs the single hard dependency (`ecdsa`), optionally installs Ollama and pulls the handler model, fetches a `llama-server` binary for embeddings, writes `ceti-env.sh`, and runs the boot self-test.
+`install.sh` sets up the virtual environment, installs the single hard dependency (`ecdsa`), optionally installs Ollama and pulls the handler model, downloads the embedding model from Hugging Face (`ggml-org/embeddinggemma-2-GGUF`, Q8_0), fetches a `llama-server` binary for embeddings, asks for a node name (default CETI), generates the node identity (`data/identity.dat`), writes `ceti-env.sh`, and runs the boot self-test. Defaults cover everything — `./install.sh --yes` needs no expertise.
+
+The `llama-server` fetch tries a pinned llama.cpp build (b11630, verified for the embedding model's architecture) and falls back to the latest nightly on download failure; if the binary does not know the model's architecture, re-run with `--build-llama` to build the latest llama.cpp from source (needs cmake + a C++ compiler + git, takes a while). A smoke test at the end proves the server embeds with the model before install declares success.
 
 For a non-interactive or minimal install:
 
@@ -46,7 +48,7 @@ For a non-interactive or minimal install:
 ### After boot
 
 ```
-CETI BIOS v0.2.0 — power-on self test
+CETI BIOS v0.3.0 — power-on self test
 [  ok  ] config     data_dir=...
 [  ok  ] persona    Persona (...)
 [  ok  ] aiml       ... categories ...
@@ -70,7 +72,18 @@ Type a question. Useful REPL commands:
 | `/skills`    | List / reload SKILL.md bundles               |
 | `/ingest`    | Scan `data/library/` into vector memory      |
 | `/story`     | Oracle paper writer (new/write/status/compile/list) |
-| `/quit`      | Exit                                         |
+| `/tui`       | Full-screen terminal UI (sessions, streaming)      |
+| `/new`       | Fresh chat in the TUI                              |
+| `/sessions`  | List saved TUI chats                               |
+| `/resume`    | Reopen a saved TUI chat                            |
+| `/gopher`    | Retro menu: board, mail, chat, files               |
+| `/peers`     | List known nodes                                   |
+| `/board`     | Signed board posts                                 |
+| `/mail`      | Signed direct messages                             |
+| `/chat`      | Live signed chat room                              |
+| `/upload`    | Share a signed file to the drop                    |
+| `/download`  | Fetch a file from the drop                         |
+| `/quit`      | Exit                                               |
 
 ---
 
@@ -118,6 +131,28 @@ In handler mode the local model is instructed to present retrieved knowledge rat
    - **< 0.45** → discard
 3. Promoted knowledge accumulates until you cut a signed release.
 4. Questions that repeatedly fail become curiosity tasks for the idle researcher.
+
+Relevance alone never proves truth — a confident confabulation
+scores like a true fact. So learning has two more gates before
+anything enters permanent memory:
+
+- **Truth judge (factual answers only).** A "promote" still needs
+  one verification call: the local model is asked whether the
+  claim is correct, and must answer YES (unsure votes NO). A NO,
+  or a failed judge, blocks learning. Serving is unchanged —
+  the answer is still shown; only learning is gated.
+- **Contradiction check.** Before writing, the new pair is
+  compared against existing knowledge: the memory store (same
+  question) and the AIML engine (what it already answers,
+  cassettes included). A genuine disagreement blocks the write
+  and files a curiosity gap, so research can resolve it —
+  curated knowledge is never silently overridden by a model
+  guess. An elaboration (one answer contains the other) is not
+  a conflict.
+
+Neither gate is a guarantee — the truth judge is the same
+small model checking its own output. Ground truth stays the
+job of cassettes, research, and the contradiction check.
 
 The idle researcher walks `data/topics.txt` (broad, encyclopedic subjects). It researches, distills into Q&A, classifies, and writes accepted pairs into a topic cassette and the vector store. Completed topics are skipped. Cassettes hot-reload.
 
@@ -192,6 +227,61 @@ reproduced. Stories compile to `story.md`/`story.txt` under
 
 ---
 
+## Terminal UI
+
+`/tui` opens a full-screen curses interface: header with the
+node fingerprint and current chat title, scrollable transcript,
+multiline input, slash-command autocomplete (Tab), history
+(Up/Down), and Ctrl-C interrupt. Answers stream in — real
+token-by-token chunks from model tiers, and a simulated 499 t/s
+reveal for instant retrieval answers (the same cap the answer
+tag uses). Enter during a stream interrupts and redirects,
+like Hermes.
+
+Chats are sessions, not a single transcript: `/new` starts a
+fresh chat, `/sessions` lists saved ones, `/resume <id>` reopens
+one, `/delete` removes one. Every line auto-saves to
+`data/tui-sessions/`; a session with no real question never
+gets a file. The line REPL stays as the fallback — `/task`
+still bounces there, since tool calls don't run inside the
+TUI yet.
+
+## Gopher net
+
+The node network is Gopher-flavoured: retro, plain-text, and
+signed end to end. `/gopher` opens the menu.
+
+- **Peers.** `/peers` lists known nodes; `/peer add <public_hex>`
+  files a card. Node IDs are re-derived from the public key, so
+  a card is self-verifying; the address is just a routing hint.
+- **Nodelist + gossip.** `/nodelist build` signs the peer list
+  to `data/nodelist.json`; `/nodelist fetch <url|file>` pulls
+  someone else's. `/gossip export` / `/gossip import` exchange
+  peer lists the same way. The whole list is refused if any
+  entry fails verification; notes are stripped before
+  publishing — only public routing info ships.
+- **Board.** Signed posts, one JSON file each under
+  `data/board/posts/`. Bad signatures are rejected, never
+  displayed. `/board import <file>` is the federation
+  primitive.
+- **Mail.** `/mail <fingerprint> <subject> | <body>` sends a
+  signed direct message. Sending to an unfiled stranger is
+  refused; inbox messages addressed to someone else are
+  skipped, never read.
+- **Chat.** `/chat <room>` is a live signed chat room — one
+  signed JSON file per message, polled every 2s. Two terminals
+  sharing a room directory chat live.
+- **Files.** `/upload <file>` shares a signed bundle and drops
+  it in `data/drop/`; `/download` lists the drop and verifies
+  + merges on fetch.
+
+There is no live transport yet — cards, posts, and bundles
+travel as files. Nodes find each other through the signed
+nodelist (a well-known URL or shipped with a release) and
+gossip from there.
+
+---
+
 ## Configuration
 
 Environment variables (set in `ceti-env.sh` or exported):
@@ -217,26 +307,35 @@ ceti/               core package
   agent_loop.py     /task: oracle-driven tool loop, session memory
   aiml.py           pattern matching and cassettes
   backends.py       Ollama, OpenRouter, Nvidia
+  board.py          signed board posts
   boot.py           power-on self-test
   brain.py          answer ladder and learning loop
   calc.py           deterministic math tier
+  chat.py           live signed chat room
   classify.py       relevance classifier
+  gopher.py         /gopher text menu
   ingest.py         library drop-folder -> vector memory
+  mail.py           signed direct messages
   memory.py         knowledge store
+  nodelist.py       signed nodelist build/fetch/verify/merge
   notes.py          per-session notes
+  peers.py          peer address book, identity cards
   researcher.py     idle research
   retry.py          backoff + retryable-error classification
+  share.py          signed bundle share/fetch
   signing.py        identity, ECDSA, merkle
   skills.py         SKILL.md bundle loader
   story.py          oracle paper writer
   tools.py          jailed tool registry (+ sandbox jobs)
   trim.py           query-aware context compression (vendored model)
   trim_model.bin    trim-1 gradient-boosted trees (1.2 MB, Apache-2.0)
+  tui.py            full-screen curses interface
+  tui_sessions.py   saved TUI chats
   sandbox.py        Linux-namespace sandbox
   vectormem.py      local embeddings
 data/               persona, seed, learned, cassettes, topics
 skills/             file-ops, sandbox-python, web-fetch, sqlite
-tests/              unit tests (258 green)
+tests/              unit tests (329 green)
 install.sh          one-shot setup
 run.sh              launcher
 ```
@@ -269,10 +368,11 @@ The brain is stdlib-only except for `ecdsa` (signing). All other dependencies ar
 
 ## Roadmap
 
-- Stronger promotion judge so researcher-grown knowledge outranks freelanced local answers
+- Live transport for the Gopher net (nodes poll; no inbound ports)
+- Torrent seeding of signed bundles, auto-propagation, moderation
 - Multi-signer web of trust and key revocation
 - Agent-wired release → torrent → seed → verify → merge
-- BBS front end with signed posts and file serving
+- Tool calls inside the TUI (`/task` still bounces to the line REPL)
 - Story branching (two-choice trees) in the paper writer
 - QEMU sandbox backend behind the same SandboxPolicy
 
@@ -289,6 +389,8 @@ The brain is stdlib-only except for `ecdsa` (signing). All other dependencies ar
 - [Skills](docs/skills.md) — authoring SKILL.md bundles
 - [Trim](docs/trim.md) — query-aware context compression, zero model tokens
 - [Library & paper writer](docs/library-story.md) — ingest + `/story`
+- [TUI](docs/tui.md) — full-screen terminal UI, sessions, streaming
+- [Gopher net](docs/gopher.md) — signed peers, board, mail, chat, files
 - [Security model](docs/security.md) — the four boundaries
 - [Development](docs/development.md) — extending every seam, plus glossary
 - [Troubleshooting](docs/troubleshooting.md) — when something's off

@@ -61,7 +61,7 @@ class BootReport:
         n_ok = sum(1 for c in self.checks if c.status == "ok")
         n_warn = sum(1 for c in self.checks if c.status == "warn")
         n_fail = sum(1 for c in self.checks if c.status == "fail")
-        lines = ["CETI BIOS v0.2.0 — power-on self test"]
+        lines = ["CETI BIOS v0.3.0 — power-on self test"]
         for c in self.checks:
             tag = {"ok": "  ok  ", "warn": " warn ",
                    "fail": " FAIL "}[c.status]
@@ -149,10 +149,11 @@ def check_identity(cfg: BrainConfig) -> Check:
 
 
 def check_knowledge(cfg: BrainConfig) -> Check:
-    p = cfg.memory_path()
-    alt = cfg.knowledge_path()
-    # memory_path() and knowledge_path() may differ by backend default;
-    # check whichever exists, prefer memory_path.
+    p = cfg.knowledge_path()
+    alt = cfg.memory_path()
+    # knowledge_path() is the primary store (vector backend);
+    # memory_path() is the TF-IDF fallback. Check whichever
+    # exists, prefer the primary.
     target = p if os.path.exists(p) else alt
     if not os.path.exists(target):
         # never create a database as a side effect of booting; a

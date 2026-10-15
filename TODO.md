@@ -17,13 +17,16 @@
       knowledge (or the question); on violation it serves the raw
       retrieved text instead of the confabulation. False alarms cost
       prettiness, never truth. Live-verified both directions.
-- [ ] Local-tier confabulation can still be promoted: a fresh
+- [x] Local-tier confabulation can still be promoted: a fresh
       install asked "what is usenet" (nothing local knew it) and the
       1.5B model invented "1979, UC Berkeley, Network News Group",
       which the classifier promoted. Seeded the correct answers in
-      seed.aiml for the obvious questions; the real fix is a stronger
-      promotion judge for local-tier answers (they should earn
-      cassettes via the researcher, not freelancing).
+      seed.aiml for the obvious questions; the real fix is the
+      learning gates (2026-10-15): a truth judge must verify
+      factual promotes (unsure votes NO, fail-closed), and a
+      contradiction check blocks writes that disagree with
+      memory or AIML answers, filing a curiosity gap instead.
+      Serving is unchanged — only learning is gated.
 
 ## Identity / network
 - [x] Node identity 2026-10-12: `data/identity.dat` (0600) generated on
@@ -34,9 +37,12 @@
       `CETI_FINGERPRINT_PREFIX` (default `CETI`; `JERO` for the
       Jero network). The raw 32-byte secret is the regula_core
       plug point.
-- [ ] regula_core plug: network message signing, peer handshake,
-      torrent seeding identity, BBS front end file/image serving —
-      all signing as the node identity.
+- [x] regula_core plug, v1 (Gopher hole, 2026-10-14): network
+      message signing (signed board posts), peer handshake
+      (identity cards, public-key address book), BBS front end
+      (signed posts, file areas) — all signing as the node
+      identity. Still open: live transport, torrent seeding
+      identity, federated board sync.
 
 ## Roadmap
 
@@ -80,16 +86,30 @@ transmission-daemon setup, `seedtest.py` proved a loopback transfer.
       plus optional tracker; document the second-machine download
       verification as the release checklist.
 
-### BBS front end (message board)
-- [ ] Phase 1 — local board: message bases in sqlite (boards,
-      threads, posts), file areas, served through the REPL first
-      (`/bbs`), ANSI-friendly terminal UI.
-- [ ] Phase 2 — signed posts: every post signed with the node
-      identity; moderation = key-based (sysop signs, members post).
-- [ ] Phase 3 — federated boards: peer sync through the merge
-      protocol (record identity = hash of post, conflicts logged),
-      same as dataset merge. Serves files/images once regula_core
-      plugs in.
+### BBS front end (message board) — Gopher hole, v1 done 2026-10-14
+- [x] Phase 1 — local board: one JSON file per post in
+      `data/board/posts/`, served through the REPL (`/board`) and
+      the Gopher menu (`/gopher`). File areas = shared bundles.
+- [x] Phase 2 — signed posts: every post signed with the node
+      identity; bad signatures rejected, never displayed.
+      Identity cards + peer address book = the handshake.
+- [x] Phase 3 — federated boards, v1 (2026-10-14): signed
+      nodelist + gossip for discovery, mail, chat rooms,
+      upload/download via the drop. Import is explicit —
+      no auto-propagation, no live transport. Still open:
+      live transport, torrent seeding of bundles, moderation.
+
+### TUI (Hermes-style full-screen interface) — v1 done 2026-10-14
+- [x] `ceti/tui.py` (stdlib curses): header + transcript +
+      multiline input, slash-command autocomplete, history,
+      Ctrl-C interrupt, `/tui` in the REPL + `python -m ceti.tui`.
+      Line REPL stays as the fallback. Still open: tool calls
+      inside the TUI (`/task` still bounces to the line REPL).
+- [x] Streaming (2026-10-15): `stream_tokens()` +
+      `finish_stream()` in `brain.py`, `complete_stream()` in
+      `backends.py`, TUI pump + simulated 499 t/s reveal for
+      blocks, Ctrl-C cancel, Enter redirect. Verified against
+      live Ollama (19 chunks, real measured t/s).
 
 ### Tool/skill system + sandbox
 - [x] Tool registry: Tool class (name, description, JSON-schema

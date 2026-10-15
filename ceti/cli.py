@@ -17,6 +17,7 @@ into curiosity tasks and goes to learn them.
 from __future__ import annotations
 
 import json
+import os
 import select
 import sys
 import threading
@@ -89,10 +90,12 @@ def main() -> int:
         agent.tasks.set_meta("seeded", "1")
     hb = {"running": False, "result": None, "enabled": True}
     show_trace = False
-    print("brain 0.2.0 — %s at the prompt. type a question."
+    print("brain 0.3.0 — %s at the prompt. type a question."
           % agent.name)
     print("/stats /trace /tiers /heartbeat /tasks /agent /identity"
-          " /benchmark /tools /task /skills /ingest /story /quit"
+          " /benchmark /tools /task /skills /ingest /story"
+          " /gopher /peers /peer /board /share /fetch"
+          " /nodelist /gossip /chat /mail /upload /download /tui /quit"
           " — heartbeat: %s" % ("on" if hb["enabled"] else "off"))
     try:
         while True:
@@ -272,6 +275,305 @@ def main() -> int:
                     print(f"story error: {e}")
                 finally:
                     _lib.close()
+                continue
+            if line == "/gopher":
+                from . import gopher as _gopher
+                _gopher.run_gopher(brain)
+                continue
+            if line == "/peers":
+                from . import peers as _peers
+                plist = _peers.PeerBook(brain.cfg.data_dir).list()
+                if not plist:
+                    print("  (no peers yet — /peer add <public key>)")
+                for p in plist:
+                    print(f"  {p['fingerprint']}  {p.get('note', '')}")
+                continue
+            if line.startswith("/peer "):
+                from . import peers as _peers
+                parts = line.split(None, 2)
+                cmd = parts[1] if len(parts) > 1 else ""
+                arg = parts[2] if len(parts) > 2 else ""
+                book = _peers.PeerBook(brain.cfg.data_dir)
+                if cmd == "card":
+                    if brain.identity is None:
+                        print("no identity: ecdsa not installed")
+                    else:
+                        print(json.dumps(
+                            _peers.identity_card(brain.identity),
+                            indent=1))
+                elif cmd == "add" and arg:
+                    try:
+                        p = book.add(arg.split()[0])
+                        print(f"peer filed: {p['fingerprint']} "
+                              f"({p['node_id']})")
+                    except ValueError as e:
+                        print(f"peer error: {e}")
+                else:
+                    print("usage: /peer card | add <public key hex>")
+                continue
+            if line.startswith("/board"):
+                from . import board as _board
+                parts = line.split(None, 2)
+                cmd = parts[1] if len(parts) > 1 else ""
+                arg = parts[2] if len(parts) > 2 else ""
+                bd = _board.Board(brain.cfg.data_dir)
+                if cmd == "":
+                    valid, rejected = bd.list()
+                    if not valid:
+                        print("  (board empty)")
+                    for i, p in enumerate(valid, 1):
+                        print(f"  {i}. [{p['author']['fingerprint']}] "
+                              f"{p['subject']}")
+                    if rejected:
+                        print(f"  ! {len(rejected)} rejected post(s) "
+                              f"(bad signature — not shown)")
+                elif cmd == "read" and arg:
+                    try:
+                        p = bd.read(int(arg))
+                    except ValueError:
+                        p = None
+                    if p is None:
+                        print("no such post")
+                    else:
+                        print(f"[{p['author']['fingerprint']}] "
+                              f"{p['subject']}")
+                        print(p["body"])
+                elif cmd == "post" and arg:
+                    if brain.identity is None:
+                        print("no identity: ecdsa not installed")
+                    elif " | " not in arg:
+                        print("usage: /board post <subject> | <body>")
+                    else:
+                        subject, body = arg.split(" | ", 1)
+                        post = bd.post(brain.identity, subject, body)
+                        print(f"posted (signed as "
+                              f"{post['author']['fingerprint']})")
+                elif cmd == "import" and arg:
+                    try:
+                        post = bd.import_post(arg)
+                        print(f"imported post from "
+                              f"{post['author']['fingerprint']}: "
+                              f"{post['subject']}")
+                    except (OSError, ValueError) as e:
+                        print(f"import refused: {e}")
+                else:
+                    print("usage: /board | read <n> | post <subject> "
+                          "| <body> | import <file>")
+                continue
+            if line.startswith("/share "):
+                from . import share as _share
+                from .datasets import DatasetStore
+                path = line[7:].strip()
+                if not os.path.exists(path):
+                    print(f"no such file: {path}")
+                else:
+                    store = DatasetStore(os.path.join(
+                        brain.cfg.data_dir, "datasets"))
+                    try:
+                        _m, _b, tb = _share.share(
+                            store, [path], identity=brain.identity)
+                        print(f"shared -> {tb}")
+                    except Exception as e:
+                        print(f"share error: {e}")
+                continue
+            if line.startswith("/fetch "):
+                from . import share as _share
+                from .datasets import DatasetStore
+                tb = line[7:].strip()
+                store = DatasetStore(os.path.join(
+                    brain.cfg.data_dir, "datasets"))
+                try:
+                    rep = _share.fetch(store, brain.memory,
+                                       brain.aiml, tb)
+                    print(f"fetched from {rep.get('peer')}: "
+                          f"+{rep['qa_added']} Q&A, "
+                          f"+{rep['aiml_added']} AIML, "
+                          f"{rep['conflicts']} conflicts")
+                except Exception as e:
+                    print(f"fetch refused: {e}")
+                continue
+            if line.startswith("/nodelist"):
+                from . import nodelist as _nl
+                from . import peers as _peers
+                parts = line.split(None, 2)
+                cmd = parts[1] if len(parts) > 1 else ""
+                arg = parts[2] if len(parts) > 2 else ""
+                book = _peers.PeerBook(brain.cfg.data_dir)
+                if cmd == "build":
+                    if brain.identity is None:
+                        print("no identity: ecdsa not installed")
+                    else:
+                        doc = _nl.build_nodelist(book.list(),
+                                                 brain.identity)
+                        path = os.path.join(brain.cfg.data_dir,
+                                            "nodelist.json")
+                        _nl.save_nodelist(doc, path)
+                        print(f"nodelist: {len(doc['nodes'])} nodes, "
+                              f"signed as "
+                              f"{doc['signer']['fingerprint']} -> {path}")
+                elif cmd == "fetch" and arg:
+                    try:
+                        doc = _nl.fetch_nodelist(arg)
+                        rep = _nl.merge_nodelist(book, doc)
+                        print(f"nodelist merged: +{rep['added']} new, "
+                              f"{rep['known']} known")
+                    except (OSError, ValueError) as e:
+                        print(f"nodelist refused: {e}")
+                elif cmd == "show":
+                    plist = book.list()
+                    if not plist:
+                        print("  (no peers yet)")
+                    for p in plist:
+                        addr = f"  {p['address']}" if p.get("address") \
+                            else ""
+                        print(f"  {p['fingerprint']}{addr}")
+                else:
+                    print("usage: /nodelist build | fetch <url|file> "
+                          "| show")
+                continue
+            if line.startswith("/gossip"):
+                from . import nodelist as _nl
+                from . import peers as _peers
+                parts = line.split(None, 2)
+                cmd = parts[1] if len(parts) > 1 else ""
+                arg = parts[2] if len(parts) > 2 else ""
+                book = _peers.PeerBook(brain.cfg.data_dir)
+                if cmd == "export":
+                    if brain.identity is None:
+                        print("no identity: ecdsa not installed")
+                    else:
+                        doc = _nl.build_nodelist(book.list(),
+                                                 brain.identity)
+                        path = os.path.join(
+                            brain.cfg.data_dir, "drop",
+                            "gossip-%s.json"
+                            % brain.identity.fingerprint)
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        _nl.save_nodelist(doc, path)
+                        print(f"gossip exported: {len(doc['nodes'])} "
+                              f"peers -> {path}")
+                elif cmd == "import" and arg:
+                    try:
+                        doc = _nl.fetch_nodelist(arg)
+                        rep = _nl.merge_nodelist(book, doc)
+                        print(f"gossip merged: +{rep['added']} new, "
+                              f"{rep['known']} known")
+                    except (OSError, ValueError) as e:
+                        print(f"gossip refused: {e}")
+                else:
+                    print("usage: /gossip export | import <file>")
+                continue
+            if line.startswith("/chat"):
+                from . import chat as _chat
+                parts = line.split(None, 1)
+                room = parts[1].strip() if len(parts) > 1 else "lobby"
+                _chat.run_chat(brain, room or "lobby")
+                continue
+            if line.startswith("/mail"):
+                from . import mail as _mail
+                from . import peers as _peers
+                parts = line.split(None, 2)
+                cmd = parts[1] if len(parts) > 1 else ""
+                arg = parts[2] if len(parts) > 2 else ""
+                box = _mail.MailBox(brain.cfg.data_dir)
+                book = _peers.PeerBook(brain.cfg.data_dir)
+                if cmd == "":
+                    if brain.identity is None:
+                        print("no identity: ecdsa not installed")
+                    else:
+                        valid, rejected = box.inbox(
+                            brain.identity.fingerprint)
+                        if not valid:
+                            print("  (inbox empty)")
+                        for i, m in enumerate(valid, 1):
+                            print(f"  {i}. [{m['from']['fingerprint']}] "
+                                  f"{m['subject']}")
+                        if rejected:
+                            print(f"  ! {len(rejected)} rejected "
+                                  f"(bad signature — not shown)")
+                elif cmd == "import" and arg:
+                    try:
+                        m = box.import_mail(arg)
+                        print(f"mail imported from "
+                              f"{m['from']['fingerprint']}: "
+                              f"{m['subject']}")
+                    except (OSError, ValueError) as e:
+                        print(f"mail refused: {e}")
+                elif cmd and arg and " | " in arg:
+                    if brain.identity is None:
+                        print("no identity: ecdsa not installed")
+                    else:
+                        subject, body = arg.split(" | ", 1)
+                        try:
+                            m = box.send(brain.identity, cmd, subject,
+                                         body, book)
+                            print(f"mail to {cmd} queued in outbox "
+                                  f"(hand the file over)")
+                        except ValueError as e:
+                            print(f"mail error: {e}")
+                else:
+                    print("usage: /mail | <fingerprint> <subject> "
+                          "| <body> | import <file>")
+                continue
+            if line.startswith("/upload "):
+                import shutil as _shutil
+                from . import share as _share
+                from .datasets import DatasetStore
+                path = line[8:].strip()
+                if not os.path.exists(path):
+                    print(f"no such file: {path}")
+                else:
+                    store = DatasetStore(os.path.join(
+                        brain.cfg.data_dir, "datasets"))
+                    try:
+                        _m, _b, tb = _share.share(
+                            store, [path], identity=brain.identity)
+                        drop = os.path.join(brain.cfg.data_dir, "drop")
+                        os.makedirs(drop, exist_ok=True)
+                        dest = os.path.join(drop,
+                                             os.path.basename(tb))
+                        _shutil.copy2(tb, dest)
+                        print(f"uploaded -> {dest}")
+                    except Exception as e:
+                        print(f"upload error: {e}")
+                continue
+            if line.startswith("/download"):
+                from . import share as _share
+                from .datasets import DatasetStore
+                parts = line.split(None, 1)
+                name = parts[1].strip() if len(parts) > 1 else ""
+                drop = os.path.join(brain.cfg.data_dir, "drop")
+                if not name:
+                    if not os.path.isdir(drop):
+                        print("  (drop empty)")
+                    else:
+                        items = sorted(i for i in os.listdir(drop)
+                                       if i.endswith(".tar.gz"))
+                        if not items:
+                            print("  (drop empty)")
+                        for i in items:
+                            print(f"  {i}")
+                    print("usage: /download <file> (from the drop)")
+                else:
+                    tb = os.path.join(drop, os.path.basename(name))
+                    if not os.path.exists(tb):
+                        print(f"no such file in drop: {name}")
+                    else:
+                        store = DatasetStore(os.path.join(
+                            brain.cfg.data_dir, "datasets"))
+                        try:
+                            rep = _share.fetch(store, brain.memory,
+                                               brain.aiml, tb)
+                            print(f"downloaded from {rep.get('peer')}: "
+                                  f"+{rep['qa_added']} Q&A, "
+                                  f"+{rep['aiml_added']} AIML, "
+                                  f"{rep['conflicts']} conflicts")
+                        except Exception as e:
+                            print(f"download refused: {e}")
+                continue
+            if line == "/tui":
+                from . import tui as _tui
+                _tui.run_tui(brain)
                 continue
             if line == "/stats":
                 print(json.dumps(brain.stats, indent=1))

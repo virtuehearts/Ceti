@@ -9,8 +9,12 @@ environment at call time and never logged or stored.
 """
 from __future__ import annotations
 
+import http.client
 import json
+import queue
+import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -125,6 +129,128 @@ class _OpenAICompat(ChatBackend):
         if not text:
             raise BackendError("empty completion")
         return text
+
+    def complete_stream(self, system: str, user: str,
+                        max_tokens: int = 512,
+                        temperature: float = 0.3,
+                        heartbeat: float = 0.1):
+        """Stream a completion: yield content deltas as they arrive,
+        None while waiting for the next chunk. Same payload as
+        complete() but stream:true, read as SSE. The caller pumps
+        this on the main thread — None means 'no chunk yet, check
+        keys and pump again'. Raises BackendError on HTTP errors.
+        The caller closes the generator to abort (Ctrl-C).
+
+        Implementation: a daemon reader thread does the blocking
+        readline and feeds a queue; the generator polls the queue
+        with a timeout, so it never blocks on the socket. (A
+        socket timeout on the buffered reader would poison it —
+        CPython refuses further reads after one timeout — so the
+        reader thread is the honest way to stay responsive.)"""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+        parts = urllib.parse.urlsplit(self.url)
+        path = parts.path + ("?" + parts.query if parts.query else "")
+        if parts.scheme == "https":
+            conn = http.client.HTTPSConnection(
+                parts.hostname, parts.port, timeout=self.timeout)
+        else:
+            conn = http.client.HTTPConnection(
+                parts.hostname, parts.port, timeout=self.timeout)
+        try:
+            conn.request("POST", path,
+                         body=json.dumps(payload).encode("utf-8"),
+                         headers=self._headers())
+            resp = conn.getresponse()
+            if resp.status >= 400:
+                body = resp.read().decode("utf-8", "replace")[:400]
+                if 400 <= resp.status < 500:
+                    raise BackendClientError(
+                        f"HTTP {resp.status} from {self.url}: {body}")
+                raise BackendError(
+                    f"HTTP {resp.status} from {self.url}: {body}")
+        except BackendError:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
+        except (http.client.HTTPException, OSError) as e:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise BackendError(f"{type(e).__name__}: {e} ({self.url})")
+
+        q: queue.Queue = queue.Queue()
+        stop = threading.Event()
+
+        def reader() -> None:
+            try:
+                while not stop.is_set():
+                    line = resp.readline()
+                    if not line:
+                        q.put(("done", None))
+                        return
+                    text = line.decode("utf-8", "replace").strip()
+                    if not text.startswith("data:"):
+                        continue
+                    data = text[5:].strip()
+                    if data == "[DONE]":
+                        q.put(("done", None))
+                        return
+                    try:
+                        obj = json.loads(data)
+                    except ValueError:
+                        continue
+                    try:
+                        delta = (obj["choices"][0]["delta"].get("content")
+                                 or "")
+                    except (KeyError, IndexError, TypeError):
+                        continue
+                    if delta:
+                        q.put(("delta", delta))
+            except Exception as e:
+                if not stop.is_set():
+                    q.put(("error", e))
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=reader, daemon=True).start()
+        try:
+            while True:
+                try:
+                    kind, payload = q.get(timeout=heartbeat)
+                except queue.Empty:
+                    yield None
+                    continue
+                if kind == "delta":
+                    yield payload
+                elif kind == "done":
+                    return
+                else:  # error from the reader thread
+                    raise BackendError(
+                        f"{type(payload).__name__}: {payload} "
+                        f"({self.url})")
+        finally:
+            # generator closed (Ctrl-C) or stream done: stop the
+            # reader; closing the conn unblocks its readline
+            stop.set()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def complete_with_tools(self, messages: list[dict],
                             tools: list[dict],

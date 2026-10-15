@@ -161,3 +161,34 @@ class RelevanceClassifier:
         except Exception:
             return False  # judge failed: default to forgetting
         return out.startswith("YES")
+
+    # ---- LLM truth judge for factual promotes -------------------------
+    # The relevance scorer above checks shape, never truth: a
+    # confident confabulation ("the C64 was introduced in 1977")
+    # scores exactly like a true fact. So a factual answer that
+    # earned "promote" still needs one verification call before
+    # it enters permanent memory. The judge is the same small
+    # model, so this is not a guarantee — it catches the cases
+    # where the model does not believe its own answer on a second
+    # ask, and "unsure" votes NO. Ground truth stays the job of
+    # cassettes, research, and the contradiction check in _learn.
+    TRUTH_PROMPT = (
+        "You are a fact checker. Reply with exactly YES or NO.\n"
+        "Is the factual claim in this answer correct, to the best "
+        "of your knowledge?\n"
+        "Say YES only if you are confident the claim is true.\n"
+        "Say NO if the claim is wrong, or if you are unsure.\n"
+        "Q: {q}\nA: {a}\n"
+        "YES or NO:"
+    )
+
+    def verify_truth(self, question: str, answer: str,
+                     llm_callable) -> bool:
+        """llm_callable(prompt) -> str. Returns True to learn."""
+        try:
+            out = llm_callable(
+                self.TRUTH_PROMPT.format(
+                    q=question[:500], a=answer[:800])).strip().upper()
+        except Exception:
+            return False  # judge failed: default to forgetting
+        return out.startswith("YES")
