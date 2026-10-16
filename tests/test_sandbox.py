@@ -38,7 +38,9 @@ class TestSandbox(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), "staged")
 
     def test_no_host_write(self):
-        r = run_python("open('/host_proof', 'w').write('x')")
+        # Writes outside /work and /tmp fail or do not touch the host.
+        # Host read-only bind mounts (e.g. /usr) fail loudly with EROFS.
+        r = run_python("open('/usr/host_proof', 'w').write('x')")
         self.assertNotEqual(r.exit_code, 0)
 
     def test_ro_bind(self):
