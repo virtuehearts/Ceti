@@ -7,7 +7,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ceti.backends import (_to_wire, BackendClientError, BackendError,
-                            OpenRouterBackend)
+                            NvidiaBackend, OpenRouterBackend)
 from ceti.retry import retry
 
 
@@ -92,6 +92,50 @@ class TestNoRetryOn4xx(unittest.TestCase):
         self.assertEqual(retry(flaky, attempts=3, delay=0,
                                exceptions=(BackendError,)), "ok")
         self.assertEqual(len(calls), 3)
+
+
+class TestProviderErrorPayload(unittest.TestCase):
+    """A provider can answer HTTP 200 with an error payload instead
+    of a completion (OpenRouter does this when its upstream times
+    out). The backend must surface the provider's error, not "bad
+    response shape: 'choices'"."""
+
+    def _backend(self):
+        return OpenRouterBackend("k", model="m", timeout=5)
+
+    def test_504_error_payload_is_backend_error(self):
+        def fake_post(url, payload, headers, timeout):
+            return {"error": {"message": "The operation was aborted",
+                              "code": 504,
+                              "metadata": {"error_type": "timeout"}}}
+        with mock.patch("ceti.backends._post_json", fake_post):
+            with self.assertRaisesRegex(BackendError, "504.*aborted"):
+                self._backend().complete("sys", "hi")
+
+    def test_4xx_error_payload_is_client_error(self):
+        def fake_post(url, payload, headers, timeout):
+            return {"error": {"message": "model not found", "code": 404}}
+        with mock.patch("ceti.backends._post_json", fake_post):
+            with self.assertRaises(BackendClientError):
+                self._backend().complete("sys", "hi")
+
+    def test_error_payload_in_tools_call(self):
+        def fake_post(url, payload, headers, timeout):
+            return {"error": {"message": "upstream timeout", "code": 504}}
+        with mock.patch("ceti.backends._post_json", fake_post):
+            with self.assertRaises(BackendError):
+                self._backend().complete_with_tools([], [])
+
+
+class TestNvidiaModelId(unittest.TestCase):
+    def test_free_suffix_stripped(self):
+        # ":free" is an OpenRouter suffix; Nvidia 404s on it.
+        b = NvidiaBackend("k", model="nvidia/nemotron-3.5-lightning:free")
+        self.assertEqual(b.model, "nvidia/nemotron-3.5-lightning")
+
+    def test_plain_model_untouched(self):
+        b = NvidiaBackend("k", model="nvidia/nemotron-3.5-lightning")
+        self.assertEqual(b.model, "nvidia/nemotron-3.5-lightning")
 
 
 if __name__ == "__main__":

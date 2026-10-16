@@ -79,6 +79,24 @@ class TestAgentLoop(unittest.TestCase):
         roles = [l["role"] for l in lines]
         self.assertEqual(roles, ["user", "assistant", "tool", "assistant"])
 
+    def test_false_completion_without_tools_fails_loud(self):
+        # A small model can hallucinate tool use: it claims "the file
+        # is created" without ever calling a tool. The loop must not
+        # return that as success: nudge once, then fail loudly.
+        backend = FakeBackend([
+            _final("The file hello.txt has been created."),
+            _final("Done, the file is created."),
+        ])
+        sess = AgentSession(self.cfg, backend)
+        try:
+            result = sess.run("create hello.txt")
+        finally:
+            sess.close()
+        self.assertIn("without calling any tools", result)
+        self.assertNotIn("has been created", result)
+        self.assertFalse(os.path.exists(
+            os.path.join(os.environ["CETI_WORK_ROOT"], "hello.txt")))
+
     def test_unknown_tool_is_an_error_not_a_crash(self):
         backend = FakeBackend([
             _tool_call("nope", {}),
@@ -187,7 +205,11 @@ class TestAgentLoop(unittest.TestCase):
             AgentSession(self.cfg, backend)
 
     def test_run_task_helper(self):
-        backend = FakeBackend([_final("quick")])
+        # /task is tool work: a completion claim needs >= 1 tool call.
+        backend = FakeBackend([
+            _tool_call("list_files", {}),
+            _final("quick"),
+        ])
         result, sid = run_task(self.cfg, backend, "hi")
         self.assertEqual(result, "quick")
         self.assertTrue(sid)
@@ -196,6 +218,7 @@ class TestAgentLoop(unittest.TestCase):
         backend = FakeBackend([
             {"content": "", "tool_calls": []},
             {"content": "", "tool_calls": []},
+            _tool_call("list_files", {}),
             _final("finally done"),
         ])
         sess = AgentSession(self.cfg, backend)

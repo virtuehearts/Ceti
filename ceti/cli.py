@@ -63,6 +63,12 @@ def heartbeat_tick(hb: dict, cycle_fn=_real_cycle) -> None:
 
 
 def main() -> int:
+    from . import colour as _colour
+    from . import help as _help
+    # BBS startup: clear, banner, self-test, /help, then the prompt.
+    # The TUI never auto-loads — /tui enters it explicitly.
+    _colour.clear_screen()
+    print(_colour.paint(_colour.BANNER, _colour.GREEN))
     report = boot()
     print(report.text)
     for note in report.notes:
@@ -90,13 +96,9 @@ def main() -> int:
         agent.tasks.set_meta("seeded", "1")
     hb = {"running": False, "result": None, "enabled": True}
     show_trace = False
-    print("brain 0.3.0 — %s at the prompt. type a question."
+    print(_help.HELP_TEXT)
+    print("brain 0.3.1 — %s at the prompt. type a question."
           % agent.name)
-    print("/stats /trace /tiers /heartbeat /tasks /agent /identity"
-          " /benchmark /tools /task /skills /ingest /story"
-          " /gopher /peers /peer /board /share /fetch"
-          " /nodelist /gossip /chat /mail /upload /download /tui /quit"
-          " — heartbeat: %s" % ("on" if hb["enabled"] else "off"))
     try:
         while True:
             if hb["result"] is not None:
@@ -214,16 +216,61 @@ def main() -> int:
                 print(f"  library: {_lib.count_chunks()} chunks total")
                 _lib.close()
                 continue
+            if line.startswith("/bus"):
+                # BIOS bus opcodes: /bus post | read <q> | compile <topic>
+                from . import bus as _bus
+                from . import ingest as _ing
+                _parts = line.split(None, 2)
+                _cmd = _parts[1] if len(_parts) > 1 else ""
+                _arg = _parts[2] if len(_parts) > 2 else ""
+                try:
+                    _lib = _ing.Library(brain.cfg.data_dir)
+                except Exception:
+                    _lib = None
+                _b = _bus.MemoryBus.from_brain(brain, library=_lib)
+                try:
+                    if _cmd == "post":
+                        print(json.dumps(_b.post(), indent=1))
+                    elif _cmd == "read":
+                        if not _arg:
+                            print("usage: /bus read <question>")
+                        else:
+                            _r = _b.read(_arg)
+                            for _f in _r.frames:
+                                print(f"  [{_f.store}] { _f.text[:300]}")
+                            for _g in _r.gaps:
+                                print(f"  [gap] {_g.question}")
+                            if not _r.frames:
+                                print("  (miss — gap logged)")
+                    elif _cmd == "compile":
+                        if not _arg:
+                            print("usage: /bus compile <topic>")
+                        else:
+                            _c = _b.compile(_arg, intent="article")
+                            print(f"  local coverage: "
+                                  f"{_c.local_coverage:.0%} "
+                                  f"({len(_c.subquestions)} sub-questions)")
+                            print(f"  local frames: {len(_c.frames)}  "
+                                  f"gaps: {len(_c.gaps)}")
+                            for _g in _c.gaps:
+                                print(f"  [gap] {_g.question}")
+                    else:
+                        print("usage: /bus post | read <question> | "
+                              "compile <topic>")
+                finally:
+                    if _lib is not None:
+                        _lib.close()
+                continue
             if line.startswith("/story"):
                 from . import story as _st
                 parts = line.split(None, 2)
                 cmd = parts[1] if len(parts) > 1 else ""
                 arg = parts[2] if len(parts) > 2 else ""
                 if cmd not in ("new", "write", "status", "compile",
-                               "list"):
+                               "list", "article"):
                     print("usage: /story new <premise> | write <id> "
                           "[pages] [count] | status <id> | compile <id> "
-                          "| list")
+                          "| list | article <topic> [q1; q2; ...]")
                     continue
                 backend = next(
                     (b for b in brain.clouds
@@ -234,6 +281,31 @@ def main() -> int:
                     continue
                 from . import ingest as _ing
                 _lib = _ing.Library(brain.cfg.data_dir)
+                # article is compile-first via the bus: backend is
+                # optional — with no oracle it writes local-only.
+                if cmd == "article":
+                    try:
+                        from . import bus as _bus
+                        _b = _bus.MemoryBus.from_brain(
+                            brain, library=_lib)
+                        _ac = _st.ArticleCompiler(
+                            brain.cfg, _b, backend=backend)
+                        # "Topic | q1; q2; ..." — sub-questions after |
+                        _topic, _, _qs = arg.partition("|")
+                        _subs = [s.strip() for s in _qs.split(";")
+                                 if s.strip()] or None
+                        _r = _ac.compile_article(_topic.strip(),
+                                                 subquestions=_subs)
+                        print(f"article {_r['topic']}: "
+                              f"{_r['local_coverage']:.0%} local, "
+                              f"{_r['gaps_filled']} gaps filled, "
+                              f"{_r['gaps_open']} open, "
+                              f"{_r['words']} words -> {_r['md']}")
+                    except (_st.StoryError, ValueError) as e:
+                        print(f"story error: {e}")
+                    finally:
+                        _lib.close()
+                    continue
                 _w = _st.StoryWriter(brain.cfg, backend, library=_lib)
                 try:
                     if cmd == "list":
@@ -570,6 +642,104 @@ def main() -> int:
                                   f"{rep['conflicts']} conflicts")
                         except Exception as e:
                             print(f"download refused: {e}")
+                continue
+            if line == "/help":
+                from . import help as _help
+                print(_help.HELP_TEXT)
+                continue
+            if line == "/research" or line.startswith("/research "):
+                from . import researcher as _res
+                _r = _res.Researcher(brain)
+                parts = line.split(None, 2)
+                sub = parts[1] if len(parts) > 1 else ""
+                arg = parts[2] if len(parts) > 2 else ""
+                try:
+                    if sub == "":
+                        st = _r.status()
+                        print(f"research sites: "
+                              f"{', '.join(st['sites'])}")
+                        print(f"topics queued: {len(_r.topics())} "
+                              f"({', '.join(_r.topics()[:5])}"
+                              f"{'...' if len(_r.topics()) > 5 else ''})")
+                        print(f"interests: "
+                              f"{', '.join(st['interests']) or '(none)'}")
+                        nb = st["nightly_budget"]
+                        print(f"nightly budget: {nb['max_topics']} "
+                              f"topics, {nb['max_qa']} Q&A, "
+                              f"{nb['max_minutes']} min")
+                        print(f"completed: {len(st['completed'])} "
+                              f"topics, {st['qa_total']} Q&A recorded")
+                    elif sub == "sites":
+                        sp = arg.split(None, 1)
+                        if not sp:
+                            for s in _r.config.sites:
+                                print(f"  {s}")
+                        elif sp[0] == "add" and len(sp) > 1:
+                            print(f"site added: "
+                                  f"{_r.config.add_site(sp[1])}")
+                        elif sp[0] == "remove" and len(sp) > 1:
+                            print(f"site removed: "
+                                  f"{_r.config.remove_site(sp[1])}")
+                        else:
+                            print("usage: /research sites "
+                                  "[add|remove <domain>]")
+                    elif sub == "topics":
+                        sp = arg.split(None, 1)
+                        if not sp:
+                            for t in _r.topics():
+                                print(f"  {t}")
+                        elif sp[0] == "add" and len(sp) > 1:
+                            print(f"topic added: "
+                                  f"{_r.add_topic(sp[1])}")
+                        elif sp[0] == "remove" and len(sp) > 1:
+                            print(f"topic removed: "
+                                  f"{_r.remove_topic(sp[1])}")
+                        else:
+                            print("usage: /research topics "
+                                  "[add|remove <topic>]")
+                    elif sub == "interests":
+                        sp = arg.split(None, 1)
+                        if not sp:
+                            for i in _r.config.interests:
+                                print(f"  {i}")
+                            if not _r.config.interests:
+                                print("  (none)")
+                        elif sp[0] == "add" and len(sp) > 1:
+                            print(f"interest added: "
+                                  f"{_r.config.add_interest(sp[1])}")
+                        elif sp[0] == "remove" and len(sp) > 1:
+                            print(f"interest removed: "
+                                  f"{_r.config.remove_interest(sp[1])}")
+                        else:
+                            print("usage: /research interests "
+                                  "[add|remove <text>]")
+                    elif sub == "budget":
+                        sp = arg.split()
+                        if not sp:
+                            nb = _r.config.nightly
+                            print(f"  max_topics={nb['max_topics']} "
+                                  f"max_qa={nb['max_qa']} "
+                                  f"max_minutes={nb['max_minutes']}")
+                        else:
+                            kv = {}
+                            for i in range(0, len(sp) - 1, 2):
+                                try:
+                                    kv[sp[i]] = int(sp[i + 1])
+                                except ValueError:
+                                    print(f"not a number: {sp[i + 1]}")
+                                    kv = None
+                                    break
+                            if kv is not None:
+                                nb = _r.config.set_budget(**kv)
+                                print(f"nightly budget: "
+                                      f"{nb['max_topics']} topics, "
+                                      f"{nb['max_qa']} Q&A, "
+                                      f"{nb['max_minutes']} min")
+                    else:
+                        print("usage: /research [sites|topics|"
+                              "interests|budget]")
+                except ValueError as e:
+                    print(f"research error: {e}")
                 continue
             if line == "/tui":
                 from . import tui as _tui

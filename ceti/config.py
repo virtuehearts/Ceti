@@ -42,9 +42,15 @@ class BrainConfig:
     # ---- cloud LLMs (OpenAI-compatible) --------------------------------
     openrouter_url: str = "https://openrouter.ai/api/v1/chat/completions"
     nvidia_url: str = "https://integrate.api.nvidia.com/v1/chat/completions"
-    cloud_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
-    cloud_timeout: int = 45
-    cloud_max_tokens: int = 512
+    cloud_model: str = "nvidia/nemotron-3.5-lightning:free"
+    # Reasoning models need room AND time: they burn tokens on
+    # their thinking trace before writing the answer, so a 512-token
+    # budget starves them to null content (finish=length) and a 45s
+    # timeout kills them mid-thought. Lightning answers in ~60s and
+    # drives tools (verified 2026-10-16); the previous default,
+    # nemotron-3-ultra-550b, 504s on the provider side.
+    cloud_timeout: int = 180
+    cloud_max_tokens: int = 2048
     cloud_temperature: float = 0.3
     # cloud backends tried in this order
     cloud_order: tuple = ("openrouter", "nvidia")

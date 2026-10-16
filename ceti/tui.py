@@ -39,6 +39,7 @@ cancels the old answer and starts the new one.
 """
 from __future__ import annotations
 
+import os
 import time
 
 from . import tui_sessions
@@ -58,6 +59,70 @@ COMMANDS = (
 def complete_command(prefix: str) -> list[str]:
     """Commands matching a typed / prefix, in definition order."""
     return [c for c in COMMANDS if c.startswith(prefix)]
+
+
+# ---- colour -----------------------------------------------------------
+# Phosphor BBS palette for the curses TUI. init_palette() runs once
+# inside run_tui (real curses only); tests drive TUI.run with a fake
+# screen and never call it, so _attrs stays all-zero there and every
+# addstr falls back to the default attribute. NO_COLOR disables it.
+# The transcript stores plain strings — colour is a render-time
+# classification, so saved sessions stay format-compatible.
+_ATTRS: dict[str, int] = {}
+_PALETTE_INIT = False
+
+
+def init_palette() -> None:
+    """Define colour pairs. Safe to call anywhere: no curses, no
+    colour support, or NO_COLOR all leave the palette all-zero."""
+    global _PALETTE_INIT
+    if _PALETTE_INIT:
+        return
+    _PALETTE_INIT = True
+    if os.environ.get("NO_COLOR") is not None:
+        return
+    try:
+        import curses
+        if not curses.has_colors():
+            return
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+        except Exception:
+            pass
+        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(6, curses.COLOR_RED, curses.COLOR_BLACK)
+        _ATTRS.update({
+            "header": curses.color_pair(1) | curses.A_BOLD,
+            "user": curses.color_pair(2),
+            "ceti": curses.color_pair(3),
+            "tag": curses.color_pair(4),
+            "system": curses.color_pair(5) | curses.A_DIM,
+            "alert": curses.color_pair(6) | curses.A_BOLD,
+            "popup_sel": curses.color_pair(2) | curses.A_BOLD,
+        })
+    except Exception:
+        _ATTRS.clear()
+
+
+def attr_for(line: str) -> int:
+    """Render-time role colour for one transcript line."""
+    if line.startswith("you> "):
+        return _ATTRS.get("user", 0)
+    if line.startswith("["):
+        return _ATTRS.get("tag", 0)
+    if line.startswith("error:") or line.startswith("(cancelled)") \
+            or line.lstrip().startswith("!"):
+        return _ATTRS.get("alert", 0)
+    if line.startswith("(") or line.startswith("  ") \
+            or line.startswith("keys:") or line.startswith("fingerprint:") \
+            or line.startswith("node_id:"):
+        return _ATTRS.get("system", 0)
+    return _ATTRS.get("ceti", 0)
 
 
 class History:
@@ -589,10 +654,24 @@ class TUI:
             height, width = screen.getmaxyx()
             if height < 4 or width < 20:
                 return
+
+            def put(y, x, s, attr=0):
+                # 3-arg addstr when colour is off: keeps the
+                # minimal screen contract (old fakes take 3 args).
+                # A screen that rejects attrs degrades to plain.
+                if attr:
+                    try:
+                        screen.addstr(y, x, s, attr)
+                    except TypeError:
+                        screen.addstr(y, x, s)
+                else:
+                    screen.addstr(y, x, s)
+
             fp = getattr(getattr(self.brain, "identity", None),
                          "fingerprint", "?")
             header = f" CETI // {fp} // {self.session.title} "
-            screen.addstr(0, 0, header.ljust(width)[:width])
+            put(0, 0, header.ljust(width)[:width],
+                _ATTRS.get("header", 0))
             # transcript pane: everything between header and input
             input_h = max(3, len(self.editor.lines) + 1)
             pane_h = height - 1 - input_h - 1
@@ -605,24 +684,29 @@ class TUI:
                 lines = (lines + [ln[:width] for ln in buf_lines])
                 lines = lines[-pane_h:]
             for i, ln in enumerate(lines):
-                screen.addstr(1 + i, 0, ln)
+                put(1 + i, 0, ln, attr_for(ln))
             # input box
             y0 = height - input_h - 1
-            screen.addstr(y0, 0, "─" * width)
+            put(y0, 0, "─" * width, _ATTRS.get("system", 0))
             for i, ln in enumerate(self.editor.lines):
-                screen.addstr(y0 + 1 + i, 0,
-                              ("you> " + ln)[:width])
+                put(y0 + 1 + i, 0,
+                    ("you> " + ln)[:width],
+                    _ATTRS.get("user", 0))
             # completion popup
             if self.completions:
                 for i, c in enumerate(self.completions[:5]):
                     marker = ">" if i == self.comp_idx else " "
-                    screen.addstr(y0 + 1 + len(self.editor.lines) + i,
-                                  2, f"{marker} {c}"[:width])
+                    attr = _ATTRS.get(
+                        "popup_sel" if i == self.comp_idx else "system",
+                        0)
+                    put(y0 + 1 + len(self.editor.lines) + i,
+                        2, f"{marker} {c}"[:width], attr)
             # footer
-            screen.addstr(height - 1, 0,
-                          " Enter send · Alt-Enter newline · /new /help · "
-                          "Tab complete · Up/Down history · "
-                          "Ctrl-C cancel · /quit leaves."[:width])
+            put(height - 1, 0,
+                " Enter send · Alt-Enter newline · /new /help · "
+                "Tab complete · Up/Down history · "
+                "Ctrl-C cancel · /quit leaves."[:width],
+                _ATTRS.get("system", 0))
             try:
                 screen.curs_set(1)
             except Exception:
@@ -675,6 +759,7 @@ def run_tui(brain, ask_fn=None) -> None:
             curses.curs_set(1)
         except Exception:
             pass
+        init_palette()
         TUI(brain, ask_fn=ask_fn).run(stdscr)
 
     curses.wrapper(_main)

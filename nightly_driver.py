@@ -22,11 +22,11 @@ EMBED = "http://127.0.0.1:11435"
 
 os.environ["CETI_DATA_DIR"] = DATA
 os.environ["OLLAMA_MODELS"] = "/home/hatch/workspace/models/ollama"
-# Wikipedia-only fetching tonight: the multi-engine fetcher touches a new
-# random host per topic, and each one pops a CONNECT approval card on Jero's
-# phone (2026-10-12). en.wikipedia.org is a single already-seen host, and
-# these topics are all encyclopedic anyway.
-os.environ["CETI_WIKI_ONLY"] = "1"
+# Research sites + nightly budget come from data/research.json
+# (see /research in the REPL). Default allowlist is Wikipedia-only:
+# the multi-engine fetcher used to touch a new random host per topic,
+# and each one popped a CONNECT approval card on Jero's phone
+# (2026-10-12). Only explicitly-added sites are ever fetched.
 sys.path.insert(0, "/home/hatch/workspace/ceti")
 
 
@@ -106,11 +106,26 @@ def main():
     # enough for the light fetcher; the distill step's qwen load was
     # canary-proven an hour ago. Library default (1.0) untouched.
     r = Researcher(brain, min_mem_gb=0.15)
+    budget = r.config.nightly
+    night_t0 = time.time()
+    qa_total = 0
     done = 0
     fail_streak = {}
     skipped = []
     try:
         while time.time() < DEADLINE:
+            if done >= budget["max_topics"]:
+                log("nightly budget: max_topics %d reached"
+                    % budget["max_topics"])
+                break
+            if qa_total >= budget["max_qa"]:
+                log("nightly budget: max_qa %d reached"
+                    % budget["max_qa"])
+                break
+            if (time.time() - night_t0) / 60 >= budget["max_minutes"]:
+                log("nightly budget: max_minutes %d reached"
+                    % budget["max_minutes"])
+                break
             if not services_ok():
                 log("service down between topics; restarting")
                 if not ensure_services():
@@ -141,7 +156,9 @@ def main():
                 res = r.research_topic(topic)
                 if isinstance(res, dict) and res.get("failed"):
                     raise RuntimeError(res["failed"])
-                qa = res.get("qa_added", res)
+                qa = res.get("qa_added", res) if isinstance(res, dict) \
+                    else res
+                qa_total += qa if isinstance(qa, int) else 0
                 log("TOPIC DONE: %s -> %s" % (topic, json.dumps(qa)[:200]))
                 done += 1
                 fail_streak.pop(topic, None)

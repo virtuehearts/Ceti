@@ -80,6 +80,30 @@ def _to_wire(m: dict) -> dict:
     return {"role": role, "content": m.get("content") or ""}
 
 
+def _check_provider_error(resp: dict) -> None:
+    """A provider can answer HTTP 200 with an error payload instead
+    of a completion (OpenRouter does this when its upstream times
+    out: {"error": {"message": "The operation was aborted", "code":
+    504}}). Without this check the caller falls through to "bad
+    response shape: 'choices'", which hides the real failure."""
+    if not isinstance(resp, dict):
+        return
+    err = resp.get("error")
+    if not isinstance(err, dict):
+        return
+    msg = err.get("message") or "provider error"
+    code = err.get("code")
+    text = (f"provider error {code}: {msg}" if code is not None
+            else f"provider error: {msg}")
+    try:
+        code_int = int(code)
+    except (TypeError, ValueError):
+        code_int = 0
+    if 400 <= code_int < 500:
+        raise BackendClientError(text)
+    raise BackendError(text)
+
+
 class ChatBackend:
     """Base: complete(system, user) -> str."""
     name = "base"
@@ -121,6 +145,7 @@ class _OpenAICompat(ChatBackend):
             "stream": False,
         }
         resp = _post_json(self.url, payload, self._headers(), self.timeout)
+        _check_provider_error(resp)
         try:
             text = resp["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
@@ -276,6 +301,7 @@ class _OpenAICompat(ChatBackend):
             "stream": False,
         }
         resp = _post_json(self.url, payload, self._headers(), self.timeout)
+        _check_provider_error(resp)
         try:
             msg = resp["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as e:
@@ -330,4 +356,8 @@ class NvidiaBackend(_OpenAICompat):
                  timeout: int = 45):
         if not api_key:
             raise BackendError("NVIDIA_API_KEY not set")
+        # ":free" is an OpenRouter suffix — Nvidia's API 404s on it.
+        # The same cloud_model is used for both backends, so strip
+        # it here rather than in every caller.
+        model = model.removesuffix(":free")
         super().__init__(url, model, timeout, api_key)

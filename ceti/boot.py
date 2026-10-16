@@ -58,14 +58,21 @@ class BootReport:
 
     @property
     def text(self) -> str:
+        from . import colour as _colour
         n_ok = sum(1 for c in self.checks if c.status == "ok")
         n_warn = sum(1 for c in self.checks if c.status == "warn")
         n_fail = sum(1 for c in self.checks if c.status == "fail")
-        lines = ["CETI BIOS v0.3.0 — power-on self test"]
+        lines = [_colour.paint("CETI BIOS v0.3.1 — power-on self test",
+                               _colour.BOLD, _colour.GREEN)]
+        tag_colour = {"ok": _colour.GREEN, "warn": _colour.AMBER,
+                      "fail": _colour.RED}
         for c in self.checks:
             tag = {"ok": "  ok  ", "warn": " warn ",
                    "fail": " FAIL "}[c.status]
-            lines.append("[%s] %-10s %s" % (tag, c.name, c.detail))
+            lines.append("%s %-10s %s"
+                         % (_colour.paint("[" + tag + "]",
+                                          tag_colour[c.status]),
+                            c.name, c.detail))
         verdict = ("all systems nominal" if n_fail == 0 and n_warn == 0
                    else "degraded — tiers will fall through gaps"
                    if self.ok else "CORE FAILURE — refusing to start")

@@ -241,6 +241,8 @@ class AgentSession:
         self.task = task.strip()
         self._append({"role": "user", "content": task.strip()})
         empty_stalls = 0
+        tool_calls_made = 0
+        no_tool_nudges = 0
         # Reasoning models burn tokens on their thinking trace; the
         # loop needs headroom for reasoning AND tool calls.
         max_tokens = max(self.cfg.cloud_max_tokens, 8000)
@@ -272,7 +274,26 @@ class AgentSession:
                                    "to make progress, or reply in plain "
                                    "text when it is complete."})
                     continue
-                return content or "(no response)"
+                if not content:
+                    return content or "(no response)"
+                if tool_calls_made == 0:
+                    # A small model can hallucinate tool use: it claims
+                    # "the file is created" without ever calling a tool.
+                    # Never return that as success. Nudge once, then
+                    # fail loudly instead of reporting a lie.
+                    if no_tool_nudges < 1:
+                        no_tool_nudges += 1
+                        self._append({
+                            "role": "user",
+                            "content": "[nudge] You have not called any "
+                                       "tools yet. Complete the task by "
+                                       "calling the appropriate tool — "
+                                       "do not just describe the result."})
+                        continue
+                    return ("[agent] task not completed: model claimed "
+                            "completion without calling any tools")
+                return content
+            tool_calls_made += len(calls)
             for tc in calls:
                 self._append({"role": "tool",
                               "tool_call_id": tc.get("id"),

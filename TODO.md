@@ -105,6 +105,15 @@ transmission-daemon setup, `seedtest.py` proved a loopback transfer.
       Ctrl-C interrupt, `/tui` in the REPL + `python -m ceti.tui`.
       Line REPL stays as the fallback. Still open: tool calls
       inside the TUI (`/task` still bounces to the line REPL).
+- [x] **BBS startup (2026-10-15, Jero: stay on the line REPL).**
+      Startup: clear screen -> colour ASCII banner + boot POST
+      self-test -> `/help` -> line REPL prompt. The TUI never
+      auto-loads; `/tui` enters it explicitly. `ceti/colour.py`
+      (TTY-only ANSI, NO_COLOR respected), `ceti/help.py` +
+      `/help`, boot tags coloured (green/amber/red). TUI itself
+      got a curses palette (header bold green, you> cyan, answers
+      green, tags amber, system dim, errors red) — render-time
+      only, saved sessions stay plain text.
 - [x] Streaming (2026-10-15): `stream_tokens()` +
       `finish_stream()` in `brain.py`, `complete_stream()` in
       `backends.py`, TUI pump + simulated 499 t/s reveal for
@@ -194,6 +203,19 @@ StoryBlocks-style paper writer).
 
 ## Incomplete by design (queued work)
 
+- [x] **Research engine config (2026-10-15, commit 35d5cdc).**
+      `data/research.json` governs idle learning, managed from the
+      REPL with `/research`: sites allowlist (default Wikipedia-only;
+      content fetched ONLY from listed hosts — the stack drops
+      off-list results before any fetch via `--allow-sites`),
+      topics queue (`topics.txt`), evergreen interests (cycled
+      least-recent-first when the queue drains), nightly budget
+      (`max_topics`/`max_qa`/`max_minutes`, enforced by
+      `run_nightly()` + the nightly driver). Replaces the old
+      forced `CETI_WIKI_ONLY` switch; default config still uses
+      the `--wiki-only` fast path, so an older stack keeps working.
+      Stack side lives outside this repo:
+      `sovereign/research/research.py` gained `--allow-sites`.
 - [ ] **Researcher retry.** The first idle-research run (topic:
       "bulletin board system history") died without a report — the
       box was OOM-starved (~360MB free) and the research compile

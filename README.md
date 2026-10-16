@@ -16,8 +16,8 @@ No accounts. No telemetry. No landlord. It runs on a tired laptop.
 ## Quick start
 
 ```bash
-unzip ceti-0.3.0.zip
-cd ceti-0.3.0
+unzip ceti-0.3.1.zip
+cd ceti-0.3.1
 
 ./install.sh
 source ./ceti-env.sh
@@ -48,7 +48,7 @@ For a non-interactive or minimal install:
 ### After boot
 
 ```
-CETI BIOS v0.3.0 — power-on self test
+CETI BIOS v0.3.1 — power-on self test
 [  ok  ] config     data_dir=...
 [  ok  ] persona    Persona (...)
 [  ok  ] aiml       ... categories ...
@@ -67,6 +67,8 @@ Type a question. Useful REPL commands:
 | `/agent`     | Agent name, pending tasks, knowledge gaps    |
 | `/benchmark` | Self-exam of current knowledge               |
 | `/heartbeat` | Toggle idle research tick                    |
+| `/help`      | List all commands                            |
+| `/research`  | Research config: sites, topics, interests, nightly budget |
 | `/tools`     | List the tool registry                       |
 | `/task`      | Hand the cloud oracle a task; it drives tools |
 | `/skills`    | List / reload SKILL.md bundles               |
@@ -182,6 +184,28 @@ CETI is a named, persistent agent with a task queue:
 - The REPL heartbeat triggers a tick after ten quiet minutes
 - Self-benchmark quizzes every known question (exact, lowercased, and with a real typo)
 - Curiosity turns repeated failures into research tasks
+
+### Research — sites, topics, interests, nightly budget
+
+Idle learning is governed by `data/research.json`, managed from the
+REPL with `/research`:
+
+- **Sites** — content is fetched ONLY from these hosts (exact host or
+  subdomain). Default: `en.wikipedia.org`. Add one with
+  `/research sites add <domain>`; the fetcher drops off-list results
+  before any fetch, so no surprise hosts are ever read. This replaced
+  the old Wikipedia-only switch: Jero adds a site explicitly, and
+  only then may it be touched.
+- **Topics** — the one-shot queue in `data/topics.txt`
+  (`/research topics add|remove <topic>`).
+- **Interests** — evergreen areas (`/research interests add|remove`).
+  When the topic queue runs dry, the researcher cycles interests
+  least-recent first instead of stopping.
+- **Nightly budget** — `/research budget [max_topics N] [max_qa N]
+  [max_minutes N]` (defaults 5 / 40 / 120). The nightly run stops
+  when any cap is hit. With the default Wikipedia-only allowlist the
+  stack runs its `--wiki-only` fast path, so an older research stack
+  still works; custom sites need the stack's `--allow-sites` flag.
 
 ### `/task` — the oracle drives tools
 
@@ -309,6 +333,7 @@ ceti/               core package
   backends.py       Ollama, OpenRouter, Nvidia
   board.py          signed board posts
   boot.py           power-on self-test
+  bus.py            unified memory bus — CETI as BIOS (see docs/bus.md)
   brain.py          answer ladder and learning loop
   calc.py           deterministic math tier
   chat.py           live signed chat room
@@ -335,7 +360,7 @@ ceti/               core package
   vectormem.py      local embeddings
 data/               persona, seed, learned, cassettes, topics
 skills/             file-ops, sandbox-python, web-fetch, sqlite
-tests/              unit tests (329 green)
+tests/              unit tests (395 green)
 install.sh          one-shot setup
 run.sh              launcher
 ```

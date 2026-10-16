@@ -33,6 +33,7 @@ import time
 from . import pii
 from .aiml import AimlBrain
 from .cassettes import CassetteRack, slugify
+from .research_config import ResearchConfig
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_RESEARCH_PY = os.path.expanduser(
@@ -92,6 +93,7 @@ class Researcher:
         data_dir = os.path.abspath(brain.cfg.data_dir)
         self.topics_file = topics_file or os.path.join(data_dir,
                                                        "topics.txt")
+        self.config = ResearchConfig(data_dir)
         self.rack = CassetteRack(os.path.join(data_dir, "cassettes"))
         self.log_db = os.path.join(data_dir, "researcher_log.sqlite3")
         self._log_init()
@@ -128,7 +130,35 @@ class Researcher:
         return {"topics_file": self.topics_file,
                 "cassettes": self.rack.list(),
                 "completed": [t for t, f, _ in rows if f],
-                "qa_total": sum(q for _, _, q in rows)}
+                "qa_total": sum(q for _, _, q in rows),
+                "sites": list(self.config.sites),
+                "interests": list(self.config.interests),
+                "nightly_budget": dict(self.config.nightly)}
+
+    def add_topic(self, text: str) -> str:
+        """Append a topic to topics.txt (dedupe, keep comments)."""
+        topic = " ".join((text or "").split())
+        if not topic:
+            raise ValueError("empty topic")
+        if topic in self.topics():
+            return topic
+        with open(self.topics_file, "a", encoding="utf-8") as f:
+            f.write(topic + "\n")
+        return topic
+
+    def remove_topic(self, text: str) -> str:
+        topic = " ".join((text or "").split())
+        if topic not in self.topics():
+            raise ValueError("not in topics: %s" % topic)
+        kept = []
+        if os.path.exists(self.topics_file):
+            with open(self.topics_file, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip() != topic:
+                        kept.append(line)
+        with open(self.topics_file, "w", encoding="utf-8") as f:
+            f.writelines(kept)
+        return topic
 
     def topics(self) -> list[str]:
         out = []
@@ -141,12 +171,23 @@ class Researcher:
                     out.append(line)
         return out
 
-    def next_topic(self) -> str | None:
+    def next_topic(self, exclude: set | None = None) -> str | None:
         done = {r[0] for r in sqlite3.connect(self.log_db).execute(
             "SELECT topic FROM log WHERE finished IS NOT NULL")}
+        skip = exclude or set()
         for t in self.topics():
-            if t not in done:
+            if t not in done and t not in skip:
                 return t
+        # queue dry: cycle the evergreen interests, least-recent first.
+        # Interests never "complete" — they are areas, not assignments.
+        # exclude lets one run (e.g. a night) skip interests it already
+        # covered, so a single interest isn't researched 5x in a row.
+        cands = [i for i in self.config.interests
+                 if i not in (exclude or set())]
+        if cands:
+            rows = dict(sqlite3.connect(self.log_db).execute(
+                "SELECT topic, finished FROM log"))
+            return min(cands, key=lambda i: rows.get(i) or 0)
         return None
 
     # ---- idle gating ---------------------------------------------------
@@ -172,6 +213,52 @@ class Researcher:
             return {"done": "all topics covered",
                     "cassettes": self.rack.list()}
         return self.research_topic(topic)
+
+    def run_nightly(self, deadline: float | None = None) -> dict:
+        """Research until the nightly budget is spent, the deadline
+        passes, or the queue (topics + interests) runs dry. The budget
+        is the config's nightly cap: max topics, max Q&A pairs, max
+        minutes. Interests keep the night going after the queue drains
+        — they are evergreen, so a dry queue alone never ends a night
+        early unless the budget says so."""
+        budget = self.config.nightly
+        t0 = time.time()
+        spent_minutes = lambda: (time.time() - t0) / 60.0
+        done: list[dict] = []
+        qa_total = 0
+        seen: set[str] = set()
+        while True:
+            if len(done) >= budget["max_topics"]:
+                reason = "max_topics %d reached" % budget["max_topics"]
+                break
+            if qa_total >= budget["max_qa"]:
+                reason = "max_qa %d reached" % budget["max_qa"]
+                break
+            if spent_minutes() >= budget["max_minutes"]:
+                reason = "max_minutes %d reached" % budget["max_minutes"]
+                break
+            if deadline is not None and time.time() >= deadline:
+                reason = "deadline reached"
+                break
+            topic = self.next_topic(exclude=seen)
+            if not topic:
+                reason = ("interests covered tonight"
+                          if self.config.interests
+                          else "queue dry (no topics, no interests)")
+                break
+            seen.add(topic)
+            res = self.research_topic(topic)
+            if isinstance(res, dict) and res.get("failed"):
+                done.append({"topic": topic, "failed": res["failed"]})
+                continue
+            qa_total += res.get("qa_added", 0)
+            done.append({"topic": topic,
+                         "qa_added": res.get("qa_added", 0)})
+        return {"nightly": {"topics_done": len(done),
+                            "qa_added": qa_total,
+                            "elapsed_minutes": round(spent_minutes(), 1),
+                            "stopped": reason},
+                "topics": done}
 
     def research_topic(self, topic: str) -> dict:
         t0 = time.time()
@@ -200,18 +287,29 @@ class Researcher:
                 "cassette": self.rack.path(slugify(topic)),
                 "elapsed_s": int(time.time() - t0)}
 
+    def _research_cmd(self, topic: str) -> list[str]:
+        """The stack invocation. The allowlist rides along on every
+        run: Wikipedia-only for the default config (cheap fast path),
+        --allow-sites otherwise. CETI_WIKI_ONLY=1 still forces the
+        wiki fast path for anyone who set it by hand."""
+        cmd = [self.research_python, self.research_py, topic,
+               "--pages", str(self.pages),
+               "--min-mem", str(self.min_mem_gb)]
+        if os.environ.get("CETI_WIKI_ONLY") == "1" \
+                or self.config.wiki_only():
+            cmd.append("--wiki-only")
+        else:
+            cmd.append("--allow-sites")
+            cmd.append(",".join(self.config.sites))
+        return cmd
+
     def _run_research(self, topic: str) -> str | None:
         """Run the research stack; return the report path."""
         if not os.path.exists(self.research_py):
             print("research skipped: no research stack at %s "
                   "(set CETI_RESEARCH_PY)" % self.research_py, flush=True)
             return None
-        cmd = [self.research_python, self.research_py, topic,
-               "--pages", str(self.pages),
-               "--min-mem", str(self.min_mem_gb)]
-        if os.environ.get("CETI_WIKI_ONLY") == "1":
-            # single-host mode: no per-site fetch approval cards
-            cmd.append("--wiki-only")
+        cmd = self._research_cmd(topic)
         try:
             p = subprocess.run(cmd, capture_output=True, text=True,
                                timeout=self.timeout_s)

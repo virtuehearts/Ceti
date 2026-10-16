@@ -271,3 +271,123 @@ class StoryWriter:
         return {"story_id": story_id, "chapters": len(blocks),
                 "words": word_count(story_md), "md": md_path,
                 "txt": txt_path}
+
+
+# ---------------------------------------------------------------------------
+# Compile-first articles — the bus, not the oracle, writes the article.
+#
+# Old flow (StoryWriter): bible + rolling summary + library style refs,
+# then the oracle writes every chapter. Local knowledge was seasoning.
+#
+# New flow (ArticleCompiler):
+#   1. Bus.compile(topic) — fan out, read EVERY local store per
+#      sub-question. Local hits + explicit gap list. No oracle yet.
+#   2. Oracle gap-fill ONLY — one call per gap (robust parsing beats
+#      one batched call with fragile delimiters), each prompted
+#      "answer ONLY this question". UNKNOWN stays a gap, never prose.
+#   3. Assemble locally — local frames + gap answers, provenance
+#      tagged [aiml]/[memory]/[library]/[oracle gap-fill], gaps
+#      still open listed as such. Write article.md + compilation.json.
+#
+# The article never fails for lack of an oracle: with no backend it
+# is written from local knowledge alone, gaps listed as open.
+# ---------------------------------------------------------------------------
+
+_GAP_SYSTEM = ("You answer ONE factual question. Answer ONLY that "
+               "question in concise factual prose. No preamble, no "
+               "extra facts, no meta-commentary. If you do not know, "
+               "reply exactly: UNKNOWN")
+_GAP_USER = "Question: {q}\n\nAnswer only that question."
+
+
+class ArticleCompiler:
+    """Compile-first articles through the MemoryBus."""
+
+    def __init__(self, cfg, bus, backend=None):
+        self.cfg = cfg
+        self.bus = bus
+        self.backend = backend
+        self.root = os.path.join(os.path.abspath(cfg.data_dir),
+                                 STORIES_DIRNAME)
+        os.makedirs(self.root, exist_ok=True)
+
+    def _oracle_gap(self, question: str) -> str:
+        """One gap, one oracle call. UNKNOWN stays a gap."""
+        if self.backend is None:
+            return "UNKNOWN"
+        try:
+            ans = retry(
+                lambda: self.backend.complete(
+                    _GAP_SYSTEM, _GAP_USER.format(q=question),
+                    max_tokens=400, temperature=0.2),
+                attempts=2, exceptions=(BackendError,)).strip()
+        except BackendError:
+            return "UNKNOWN"
+        return ans or "UNKNOWN"
+
+    def compile_article(self, topic: str,
+                        subquestions: list[str] | None = None) -> dict:
+        topic = (topic or "").strip()
+        if not topic:
+            raise StoryError("empty topic")
+        comp = self.bus.compile(topic, intent="article",
+                                subquestions=subquestions)
+        # Gap-fill ONLY — each gap gets one oracle call, never the
+        # whole article. Local frames are never sent to the oracle
+        # as a writing prompt; the oracle sees one question at a time.
+        filled = self.bus.fill_gaps(
+            comp, lambda gaps: [self._oracle_gap(q) for q in gaps])
+        # Assemble: local first, oracle gap-fills tagged, open gaps listed.
+        lines = ["# %s\n" % topic,
+                 "_A CETI bus-compiled article — local first, "
+                 "oracle gap-fill only_\n",
+                 "Local coverage: %.0f%% (%d/%d sub-questions hit "
+                 "locally)\n" % (filled.local_coverage * 100,
+                                 sum(1 for q in filled.subquestions
+                                     if any(_norm_q(f.question) == _norm_q(q)
+                                            for f in filled.frames
+                                            if f.store != "oracle")),
+                                 len(filled.subquestions))]
+        seen: set[str] = set()
+        for q in filled.subquestions:
+            frames = [f for f in filled.frames
+                      if _norm_q(f.question) == _norm_q(q)]
+            if not frames:
+                continue
+            lines.append("## %s\n" % q)
+            for f in frames:
+                key = (f.store, f.text.strip()[:200])
+                if key in seen:
+                    continue
+                seen.add(key)
+                tag = ("[oracle gap-fill]" if f.store == "oracle"
+                       else "[%s]" % f.store)
+                lines.append("%s %s\n" % (tag, f.text.strip()))
+        if filled.gaps:
+            lines.append("## Open gaps\n")
+            lines.append("Local stores + oracle could not answer:\n")
+            for g in filled.gaps:
+                lines.append("- %s\n" % g.question)
+        article = "\n".join(lines) + "\n"
+        slug = slugify(topic)
+        d = os.path.join(self.root, "%s-article" % slug)
+        os.makedirs(d, exist_ok=True)
+        md_path = os.path.join(d, "article.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(article)
+        import json as _json
+        comp_path = os.path.join(d, "compilation.json")
+        with open(comp_path, "w", encoding="utf-8") as f:
+            _json.dump(filled.to_dict(), f, indent=1)
+        return {"topic": topic, "dir": d, "md": md_path,
+                "compilation": comp_path,
+                "local_coverage": round(filled.local_coverage, 3),
+                "gaps_open": len(filled.gaps),
+                "gaps_filled": len(comp.gaps) - len(filled.gaps),
+                "words": word_count(article)}
+
+
+def _norm_q(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", "",
+                                      (s or "").lower())).strip()
+
