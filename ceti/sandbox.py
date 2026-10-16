@@ -140,8 +140,6 @@ def _setup_and_exec(root: str, argv: list[str], env: dict[str, str],
                 pass
     os.makedirs(root + "/tmp", exist_ok=True)
     os.makedirs(root + "/work", exist_ok=True)
-    _mount(root, root, None, _MS_BIND | _MS_REC)
-    _mount(root + "/work", root + "/work", None, _MS_BIND | _MS_REC)
     _mount("tmpfs", root + "/tmp", "tmpfs",
            _MS_NOSUID | _MS_NODEV, "size=64m")
     for d in _RO_BINDS:
@@ -152,7 +150,6 @@ def _setup_and_exec(root: str, argv: list[str], env: dict[str, str],
         os.makedirs(dst, exist_ok=True)
         _mount(src, dst, None, _MS_BIND | _MS_REC)
         _mount(None, dst, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY)
-    _mount(None, root, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY)
     if not os.path.exists(root + "/usr/bin/python3"):
         raise SandboxError("no python3 under /usr in sandbox")
     os.chroot(root)
