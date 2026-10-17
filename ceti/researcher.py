@@ -68,6 +68,73 @@ def mem_available_gb() -> float:
     return 999.0
 
 
+def _balanced_span(raw: str) -> str | None:
+    """The first [...] span with brackets balanced (strings aware)."""
+    start = raw.find("[")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return raw[start:i + 1]
+    return None
+
+
+def _extract_pairs(raw: str) -> list[dict]:
+    """Best-effort: pull the [{q,a}, ...] list out of raw LLM output.
+
+    The small local model is stochastic: sometimes it returns pure
+    JSON, sometimes prose around the JSON, sometimes a trailing
+    bracketed note. The old greedy ``\\[.*\\]`` regex spanned from
+    the first ``[`` to the LAST ``]``, so a trailing "[note: ...]"
+    broke the parse and the whole topic distilled to 0 pairs.
+    Try, in order: whole-output JSON, first balanced [...] span,
+    greedy span. Return [] if nothing parses.
+    """
+    candidates = [raw.strip()]
+    span = _balanced_span(raw)
+    if span is not None:
+        candidates.append(span)
+    m = re.search(r"\[.*\]", raw, re.DOTALL)
+    if m:
+        candidates.append(m.group(0))
+    for cand in candidates:
+        try:
+            pairs = json.loads(cand)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(pairs, list):
+            continue
+        out = []
+        for p in pairs:
+            if not isinstance(p, dict):
+                continue
+            q = str(p.get("q", "")).strip()
+            a = str(p.get("a", "")).strip()
+            if q and a and len(q) <= 300:
+                out.append({"q": q, "a": a})
+        if out:
+            return out[:10]
+    return []
+
+
 class Researcher:
     def __init__(self, brain,
                  research_py: str | None = None,
@@ -334,6 +401,14 @@ class Researcher:
                 prompt, max_tokens=1500, temperature=0.2)
         raise RuntimeError("no LLM backend available for distillation")
 
+    def _llm_cloud(self, prompt: str) -> str | None:
+        """One cloud call for distillation fallback; None if no cloud."""
+        for backend in self.brain.clouds:
+            return backend.complete(
+                "Reply with ONLY the requested JSON list.",
+                prompt, max_tokens=1500, temperature=0.2)
+        return None
+
     def _distill(self, report_path: str, topic: str) -> list[dict]:
         try:
             with open(report_path, encoding="utf-8",
@@ -342,28 +417,53 @@ class Researcher:
         except OSError:
             return []
         # keep the prompt small: first ~6000 chars carry the brief
-        raw = self._llm(DISTILL_PROMPT % report[:6000])
-        m = re.search(r"\[.*\]", raw, re.DOTALL)
-        if not m:
-            return []
-        try:
-            pairs = json.loads(m.group(0))
-        except json.JSONDecodeError:
-            return []
-        out = []
-        for p in pairs if isinstance(pairs, list) else []:
-            q = str(p.get("q", "")).strip()
-            a = str(p.get("a", "")).strip()
-            if q and a and len(q) <= 300:
-                out.append({"q": q, "a": a})
-        return out[:10]
+        base = DISTILL_PROMPT % report[:6000]
+        last_raw = ""
+        for attempt in range(3):
+            if attempt == 0:
+                raw = self._llm(base)
+            elif attempt == 1:
+                # nudge: the model drifted from the format once
+                raw = self._llm(
+                    "Your last reply was not a valid JSON list. "
+                    "Reply with ONLY the JSON list, no other text.\n\n"
+                    + base)
+            else:
+                # last resort: the cloud oracle (the module docstring's
+                # fallback for when the local LLM can't do it)
+                raw = self._llm_cloud(base)
+                if raw is None:
+                    break
+            last_raw = raw or ""
+            pairs = _extract_pairs(last_raw)
+            if pairs:
+                return pairs
+        # fail LOUD: the old code silently returned [] and the topic
+        # distilled to 0 pairs with no clue why.
+        print(f"[research] distill failed for {topic!r} after 3 "
+              f"attempts; last raw output (first 500 chars): "
+              f"{last_raw[:500]!r}")
+        return []
 
     def _record(self, topic: str, pairs: list[dict]) -> int:
         """Classify each pair; record the promoted ones on the cassette
-        and in the vector knowledge base. Returns count recorded."""
+        and in the vector knowledge base. Returns count recorded.
+
+        Fact-layer gate: before a pair is written, it is distilled to
+        a fact and checked against the fact store (source="research",
+        confidence 0.9). A conflicting fact blocks the pair — it is
+        dropped, never written to the cassette or the memory store.
+        This closes the distiller-bypass: the researcher used to
+        write cassettes directly, skipping the truth judge,
+        contradiction check, and fact layer that guard _learn().
+        Pairs that don't extract to a fact still pass through (the
+        fact layer can't judge them) — the human audit before
+        shipping still applies to those.
+        """
         cassette_path = self.rack.create(topic)
         writer = AimlBrain(learned_path=cassette_path)
         added = 0
+        blocked = 0
         for p in pairs:
             q, _ = pii.strip(p["q"])
             a, _ = pii.strip(p["a"])
@@ -379,11 +479,37 @@ class Researcher:
                         max_tokens=8, temperature=0.0))
             else:
                 do = False
-            if do and writer.learn(q, a):
+            if not do:
+                continue
+            # --- fact-layer gate (fail-closed: no fact store -> pass) ---
+            facts = getattr(self.brain, "_facts", None)
+            if facts is not None:
+                try:
+                    result = facts.learn(q, a, confidence=0.9,
+                                         source="research")
+                    if result["status"] == "blocked":
+                        ex = result["existing"]
+                        print(f"[research] fact-blocked {q!r}: "
+                              f"fact store already has {ex.subject} "
+                              f"{ex.predicate} = {ex.object}", flush=True)
+                        blocked += 1
+                        continue
+                    if result["status"] in ("learned", "superseded") \
+                            and result["fact"] is not None \
+                            and self.brain.aiml is not None:
+                        for pat in result["fact"].patterns():
+                            self.brain.aiml.learn_compiled(
+                                pat, result["fact"].render())
+                except Exception:
+                    pass  # fact gate failure must not kill the run
+            if writer.learn(q, a):
                 if self.brain.memory:
                     self.brain.memory.add(q, a, verdict.score)
                     self.brain.memory.learn_aliases_from(a)
                 added += 1
+        if blocked:
+            print(f"[research] {blocked} pair(s) blocked by fact layer "
+                  f"for {topic!r}", flush=True)
         return added
 
 

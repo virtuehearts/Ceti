@@ -16,7 +16,9 @@ CETI commands — ask anything, or use a slash command:
   /stats             tier stats, AIML + memory counts
   /trace             toggle the answer-ladder trace
   /tiers             which tiers answer each intent
+  /oracle <question> skip memory/local, answer from the cloud oracle
   /benchmark         self-exam: quiz the brain on its own knowledge
+  /evals             fixed benchmarks: coding / tool / knowledge
   /identity          node fingerprint + node id
   /heartbeat         toggle the idle research heartbeat
 

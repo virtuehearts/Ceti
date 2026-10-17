@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>CETI // A Day With CETI &mdash; 2400 Baud</title><style>
+body { background:#40318d; color:#EDEBFF; font-family:"Courier New",monospace;
+  font-size:17px; max-width:760px; margin:0 auto; padding:24px;
+  line-height:1.75; }
+h1,h2,h3 { color:#FFFFFF; }
+a { color:#8FD8FF; }
+video { width:100%; background:#000; border:2px solid #8A80E8; }
+.beat,.step { border:1px solid #8A80E8; padding:12px 16px; margin:16px 0; }
+.q,.cmd { color:#FFFFFF; margin:0 0 4px; }
+.tag { color:#FFCF5E; margin:0 0 8px; }
+.src { color:#B8B0FF; font-size:0.85em; margin:8px 0 0; }
+pre { white-space:pre-wrap; word-wrap:break-word; margin:8px 0 0; }
+hr { border:0; border-top:1px solid #8A80E8; margin:32px 0; }
+nav { margin:16px 0; }
+</style></head><body>
+<h1>CETI // A DAY WITH CETI</h1>
+<p>2400 baud. The first BBSs. Mike. Before the 386DX40.</p>
+<p>READY.</p><nav><a href="index.html">day</a> &middot; <a href="blog.html">blog</a> &middot; <a href="log.html">console log</a></nav><hr>
+<h2>The Vlog</h2>
+<video controls src="ceti-day-vlog-v2.mp4"></video>
+<p>A day of using CETI as the interface to the memories &mdash;
+the modem, the boards, Mike, the Commodore, and the machine that
+came after.</p>
+<hr>
+<h2>The Day</h2>
+<div class='beat'><p class='q'>ceti&gt; what is a 2400 baud modem</p><p class='tag'>[local] (1 t/s)</p><p>A 2400 baud modem was a communication device that allowed users to connect to a computer over a telephone line at a speed of 2400 bits per second, which was roughly 240 characters per second.</p><p class='src'>tier: memory &middot; memory: library</p></div>
+<div class='beat'><p class='q'>ceti&gt; who did john call the first bbs with</p><p class='tag'>[local] (0 t/s)</p><p>John called the first BBSs with Mike.</p><p class='src'>tier: memory &middot; memory: library</p></div>
+<div class='beat'><p class='q'>ceti&gt; what was introduction date of commodore 64</p><p class='tag'>[local] (499 t/s)</p><p>The Commodore 64 was introduced in January 1982 by Commodore International.</p><p class='src'>tier: aiml</p></div>
+<div class='beat'><p class='q'>ceti&gt; what is a bbs</p><p class='tag'>[local] (1 t/s)</p><p>A BBS is a bulletin board system, a digital community where users can post messages, share files, and interact with each other.</p><p class='src'>tier: memory &middot; memory: library</p></div>
+<div class='beat'><p class='q'>ceti&gt; what is an intel 80386dx40</p><p class='tag'>[oracle +learned] (3 t/s)</p><p>Intel&#x27;s 80386DX-40 is a 32-bit x86 microprocessor clocked at 40 MHz. It was the fastest single-core 80386 variant, delivering a full 32-bit data and address bus, 4 GB linear address space, and protected/virtual-8086 modes—architecturally bridging the 80286 to the Pentium line. Early 40 MHz units required ceramic PGA packaging and careful motherboard layout to manage rising thermal and signal-integrity demands.</p><p class='src'>tier: cloud</p></div>
+
+<hr>
+<h2>The Console</h2>
+<p>CETI as a command-and-control system: calculator, dictionary,
+thesaurus, memopad, notes, weather, key authentication on the
+regula-core identity. The full test run is in the
+<a href="log.html">console log</a>. Key auth: challenge, signature,
+verification &mdash; no passwords, no shared secrets. The public key
+is the identity; the signature is the proof.</p>
+<hr>
+<h2>The Blog</h2>
+<p>John's entry for the day &mdash; cypherpunk, PayPal, UO gold, and
+the memories: <a href="blog.html">A Day on the Console</a>.</p>
+<hr>
+<h2>The Memories</h2>
+<p>John's recollections, written into CETI's library so the machine
+remembers them too. Every answer above came from these documents
+(memory tier), a cassette (AIML), or the oracle (cloud).</p>
+<h3>2400 Baud Modem</h3>
+<p>The 2400 Baud Modem</p><p>Before broadband, before dial-up at 56k, there was the 2400 baud modem.
+2400 baud meant 2400 bits per second — roughly 240 characters per
+second, about as fast as a person can read out loud. A page of text
+took seconds. A file took minutes. A big file took a phone call you
+did not want to pay for.</p><p>The 2400 baud modem spoke V.22bis. You dialed with Hayes AT commands:
+ATDT and the number, then the handshake — the clicks, the tones, the
+hiss settling into carrier. When it connected, the modem printed
+CONNECT 2400 and you were in.</p><p>We used a Commodore 64. The modem plugged into the user port or a
+cartridge interface, and the terminal program turned the TV into a
+window onto another computer. 2400 baud felt fast after 300. It felt
+like the future. It was the speed at which the BBS world ran, and
+the BBS world was the whole online world we had.</p>
+<h3>Bbs Culture</h3>
+<p>BBS Culture</p><p>BBS culture was small and it was personal. A board had a sysop
+you knew by handle, regulars you recognized by their writing,
+and rules that were enforced by the sysop&#x27;s delete key. There
+were no algorithms. The front page was whatever the sysop put
+there. The new messages were the ones people had left since you
+last called.</p><p>FidoNet was the network of boards. CBBS, the first BBS, was
+launched in 1978 by Ward Christensen and Randy Suess in Chicago.
+FidoNet started operating in 1984 and at its peak had over
+40,000 nodes. Messages traveled as echomail, files as file
+echoes, and the whole thing ran on phone calls and trust.</p><p>The culture was renegade and it was generous. People shared
+files, wrote doors, ran boards at a loss because the board was
+the point. That is the culture CETI comes from: a BBS of brains,
+signed knowledge passed node to node, your iron, your data,
+your mind.</p>
+<h3>Before The 386</h3>
+<p>Before the 386DX40</p><p>All of this — the Commodore 64, the 2400 baud modem, the first
+BBSs with Mike — was before I got my first 386DX40. The 386DX at
+40 megahertz was a different world: 32-bit, a hard drive, DOS and
+then Windows, a machine that could hold more than one thing in
+its head at once. It arrived in the early 1990s, and it changed
+what a home computer was.</p><p>But the BBS days came first. The C64 came first. The 2400 baud
+handshake came first. The 386DX40 was the machine that came
+after the lesson was already learned — that a computer is yours
+when you run it on your own iron, on your own line, with your own
+data. The 386 was faster. The Commodore was the teacher.</p>
+<h3>Calling The First Bbs</h3>
+<p>Calling the First BBSs</p><p>The first BBSs were one phone line and one computer. A sysop ran a
+board from a spare room, the modem answered on the second ring, and
+if someone was already on, you got a busy signal and tried again
+later. There was no web. There were boards, and the boards were
+everything.</p><p>You called a number, the modem shook hands, and the board answered
+in ASCII: a welcome screen, a menu, message bases, file areas. You
+read what people had left since your last call. You left a message.
+You downloaded a file if the sysop trusted you and the phone bill
+allowed it. Then you hung up and the line was free for the next
+caller.</p><p>FidoNet stitched the boards together. Messages hopped from board to
+board overnight, carried by machines calling each other when the
+rates were cheap. That was the network: no backbone, no cloud, just
+modems and sysops who kept the mail moving. darknet.ca started in
+that spirit — a board, a sysop, a line that answered.</p>
+<h3>Commodore 64 Days</h3>
+<p>Commodore 64 Days</p><p>My first computer was a Commodore 64. 64 kilobytes of RAM, a tape
+drive, a television for a monitor. It felt infinite. You turned it
+on and it said READY, and the cursor blinked, and the machine
+waited for you to tell it something.</p><p>The SID chip sang. Three voices, and every game sounded like it
+had a band living inside the box. The 6581, then the 8580 — the
+sound of the whole era, made by a chip that was designed to be a
+synthesizer first and a computer&#x27;s voice second.</p><p>I learned to code on it. BASIC, then assembly. PEEK and POKE. The
+machine did what you told it, nothing more, nothing less. LOAD
+from tape meant waiting, watching the borders flash, listening to
+the tape warble. When the program ran, it was yours — you had
+waited for it, and you knew what every line did, because you had
+typed it or read it or earned it.</p><p>The Commodore taught me: own the machine, own the data, own the
+mind. CETI is that lesson, grown up.</p>
+<h3>Mike</h3>
+<p>Mike</p><p>I called the first BBSs with Mike, one of my sister&#x27;s friends, in
+the mid-90s. Mike
+was the one who knew the numbers — which boards were up, which sysop
+was friendly, which number not to bother with because it was always
+busy. We used a Commodore 64 and a 2400 baud modem, and we took
+turns at the keyboard.</p><p>That is how you learned the BBS world: someone showed you. Someone
+who had already been there told you the number, told you what to
+type, told you not to tie up the phone line. Mike was that someone
+for me. The boards we called were the first ones I ever saw, and
+they are the reason darknet.ca exists — the board as a place, the
+sysop as a host, the call as a visit.</p>
+<h3>Salt Library</h3>
+<p>THE SALT LIBRARY — a style sampler (original text)</p><p>Mara had worked the night desk at the Salt Library for eleven years,
+and in that time she had learned that books exhale. Not metaphorically.
+On quiet nights, when the fog came off the bay and pressed its grey
+face against the high windows, she could hear them: a soft collective
+sigh from the stacks, as if ten thousand paper lungs were letting go
+of the day&#x27;s held breath.</p><p>She shelved by intuition now. The catalog had given up on her years
+ago — or she on it. A patron would describe a feeling, not a title:
+&quot;the one where the house is angry,&quot; &quot;the one with the blue train,&quot;
+and Mara&#x27;s feet would take her unerringly to the right aisle, the
+right shelf, the right spine. The books, she had come to understand,
+were not organized by author or subject. They were organized by
+weather. Some aisles were perpetually autumn. Others held a static,
+unmoving noon.</p><p>The new arrival came on a Tuesday, wrapped in oilcloth and twine,
+with no return address and no catalog card. It was warm. That was
+the first wrong thing — the parcel was warm, as if it had been
+sitting in sunlight, though the day outside was iron and rain. Mara
+carried it to the back room and set it on the sorting table, and the
+lamp above the table flickered once, thoughtfully, as if considering
+whether to stay lit.</p><p>She should have logged it. That was procedure: everything gets a
+card, everything gets a number, everything gets its weather
+assessed and recorded. Instead she untied the twine. The oilcloth
+fell away like a shed skin, and the book beneath was bound in
+something that was not leather — something smoother, with a faint
+nap to it, like the skin of a fruit. The title, stamped in dull
+gold, read: FIELD GUIDE TO VANISHED ROOMS.</p><p>Mara opened it to a random page. The text described, in precise and
+loving detail, the reading room she was standing in — the sorting
+table, the thoughtful lamp, the parcel&#x27;s discarded wrapping. The
+last line of the page read: &quot;She looks up now, because she has
+realized the book is describing this exact moment.&quot;</p><p>Mara looked up. The lamp flickered twice. In the stacks, ten
+thousand paper lungs drew breath all at once — and held it.</p>
+<hr>
+<h2>The Research</h2>
+<p>46 new Q&amp;A pairs distilled into 8 cassettes.</p>
+<ul>
+<li>300-baud-modem &mdash; 6 pairs</li>
+<li>commodore-128 &mdash; 7 pairs</li>
+<li>commodore-pet &mdash; 5 pairs</li>
+<li>hayes-at-command-set &mdash; 3 pairs</li>
+<li>running-a-bbs-as-sysop &mdash; 5 pairs</li>
+<li>v-22bis-2400-baud-modem &mdash; 7 pairs</li>
+<li>vic-20 &mdash; 8 pairs</li>
+<li>wwiv-bbs-software &mdash; 5 pairs</li>
+</ul>
+<hr><p>own the machine, own the data, own the mind.<br>CETI // sovereign local brain &mdash; github.com/virtuehearts/ceti</p></body></html>

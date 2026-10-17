@@ -9,4 +9,4 @@ from .brain import Brain, Answer
 from .config import BrainConfig
 
 __all__ = ["Brain", "Answer", "BrainConfig"]
-__version__ = "0.3.0"
+__version__ = "0.3.1"

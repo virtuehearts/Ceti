@@ -27,6 +27,7 @@ from .backends import (BackendError, ChatBackend, NvidiaBackend,
                        OllamaBackend, OpenRouterBackend)
 from .cassettes import CassetteRack
 from .classify import RelevanceClassifier
+from .facts import FactStore
 from .config import BrainConfig
 from .memory import MemoryIndex
 from .retry import retry
@@ -57,6 +58,66 @@ def _numbers_grounded(answer: str, knowledge: str, question: str) -> bool:
     known = {norm(n) for n in _NUM_PAT.findall(knowledge)}
     known |= {norm(n) for n in _NUM_PAT.findall(question)}
     return all(norm(n) in known for n in _NUM_PAT.findall(answer))
+
+
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for",
+    "with", "by", "at", "from", "as", "is", "was", "are", "were", "be",
+    "been", "being", "it", "its", "this", "that", "these", "those",
+    "he", "she", "they", "we", "you", "his", "her", "their", "our",
+    "your", "my", "who", "what", "when", "where", "why", "how", "which",
+    "was", "has", "have", "had", "did", "does", "do", "will", "would",
+    "can", "could", "should", "than", "then", "there", "here", "not",
+    "all", "any", "some", "one", "two", "also", "into", "over", "under",
+}
+_REFUSAL_PAT = re.compile(
+    r"(does\s+not|doesn't|do\s+not|not)\b[^.]{0,40}\b"
+    r"(cover|say|mention|contain|include|state)\b"
+    r"|\b(don't|do not|i don't|i do not)\s+know\b", re.I)
+_WORD_PAT = re.compile(r"[a-z][a-z\-']{2,}")
+
+
+# A knowledge chunk shorter than this is a fragment (a short
+# definition), not an evidence base — the handler MUST add words to
+# answer from it, so the words check would false-alarm. The check
+# only runs on a real evidence base (library chunks are ~600 tokens).
+MIN_KNOWLEDGE_WORDS = 8
+
+
+def _words_grounded(answer: str, knowledge: str, question: str,
+                    min_overlap: float = 0.4) -> bool:
+    """The handler's answer must mostly reuse the retrieved
+    knowledge's words. The numbers check alone misses confabulation
+    with no figures ("John called the first BBSs with the name
+    'The New World'"). A handler that restates the knowledge in its
+    own words still passes — most of its content words come from the
+    chunk. A handler answering from weights invents most of its
+    words, so overlap drops below the floor and the caller falls
+    back to the raw retrieved text.
+
+    Refusals ("the knowledge does not cover it") are grounded —
+    they claim nothing.
+    """
+    if _REFUSAL_PAT.search(answer):
+        return True
+    ans_words = {w for w in _WORD_PAT.findall(answer.lower())
+                 if w not in _STOPWORDS}
+    if not ans_words:
+        return True  # no content words, nothing to check
+    known = {w for w in _WORD_PAT.findall(knowledge.lower())
+             if w not in _STOPWORDS}
+    if len(known) < MIN_KNOWLEDGE_WORDS:
+        return True  # fragment: not enough evidence to judge
+    known |= {w for w in _WORD_PAT.findall(question.lower())
+              if w not in _STOPWORDS}
+    overlap = len(ans_words & known) / len(ans_words)
+    return overlap >= min_overlap
+
+
+def _handler_grounded(answer: str, knowledge: str, question: str) -> bool:
+    """Full handler grounding: numbers AND words."""
+    return (_numbers_grounded(answer, knowledge, question)
+            and _words_grounded(answer, knowledge, question))
 
 
 @dataclass
@@ -119,10 +180,27 @@ class Brain:
                 max_learned=self.cfg.max_learned_categories,
                 extra_paths=self.rack.load_paths(self.cfg.cassettes))
 
+        # Fact store: structured learned knowledge (triples + provenance).
+        # Fail-closed: if it can't open, learning falls back to raw pairs.
+        self._facts: FactStore | None = None
+        self._fact_status: str | None = None
+        try:
+            self._facts = FactStore(os.path.join(
+                os.path.abspath(self.cfg.data_dir), "facts.sqlite3"))
+            if self.aiml is not None:
+                for pat, tpl in self._facts.compile_aiml():
+                    self.aiml.learn_compiled(pat, tpl)
+        except Exception:
+            self._facts = None
+
         self.memory = None
         self.memory_kind = "none"
         if self.cfg.enable_memory:
             self.memory, self.memory_kind = self._make_memory()
+        # lazy Library (the /ingest document store). Opened on first
+        # memory-tier lookup so a Brain without documents pays nothing.
+        self._lib = None
+        self._memory_source: str | None = None
 
         self.local = local_backend
         if self.local is None and self.cfg.enable_local:
@@ -206,6 +284,38 @@ class Brain:
                     "memory_backend=vector but the embedding server"
                     " at %s is unreachable" % self.cfg.embed_url)
         return MemoryIndex(self.cfg.memory_path()), "sqlite"
+
+    def _library(self):
+        """The /ingest document store, opened lazily. Returns None
+        when there are no documents or the store can't open — the
+        memory tier falls through to the Q&A store, never fails."""
+        if self._lib is None:
+            try:
+                from .ingest import Library
+                lib = Library(self.cfg.data_dir)
+                if lib.count_chunks() == 0:
+                    lib.close()
+                    self._lib = False
+                else:
+                    self._lib = lib
+            except Exception:
+                self._lib = False
+        return self._lib or None
+
+    def _library_hit(self, query: str, floor: float) -> str | None:
+        """Best library chunk above the floor, or None. A failure
+        (embedding server down, corrupt store) is a miss, never
+        an error — the tier falls through to the next source."""
+        lib = self._library()
+        if lib is None:
+            return None
+        try:
+            docs = lib.search(query, top_k=1)
+        except Exception:
+            return None
+        if docs and docs[0]["score"] >= floor:
+            return docs[0]["text"]
+        return None
 
     def reload_cassettes(self) -> int:
         """Rebuild the AIML brain so newly recorded cassettes take
@@ -379,15 +489,23 @@ class Brain:
         is buffered and grounding-checked before anything is
         shown — an ungrounded handler answer must never reach the
         screen. Returns True when an answer was yielded."""
-        if not self.memory:
-            return False
-        hits = self.memory.search(query, top_k=1)
         floor = (self.cfg.vector_min_score
                  if self.memory_kind == "vector"
                  else self.cfg.memory_min_score)
-        if not hits or hits[0][3] < floor:
+        knowledge = None
+        if self.memory is not None:
+            lib_hit = self._library_hit(query, floor)
+            if lib_hit is not None:
+                knowledge = lib_hit
+                self._memory_source = "library"
+        if knowledge is None and self.memory is not None:
+            hits = self.memory.search(query, top_k=1)
+            if hits and hits[0][3] >= floor:
+                knowledge = hits[0][1]
+                self._memory_source = "knowledge"
+        if knowledge is None:
+            self._memory_source = None
             return False
-        knowledge = hits[0][1]
         if self.cfg.handler_mode and self.local:
             parts: list[str] = []
             try:
@@ -405,7 +523,7 @@ class Brain:
                 pass  # fall back to the raw retrieved text
             presented = "".join(parts)
             if presented:
-                if _numbers_grounded(presented, knowledge, query):
+                if _handler_grounded(presented, knowledge, query):
                     self._handled = True
                     yield ("tag", tag)
                     yield ("block", presented)
@@ -466,6 +584,7 @@ class Brain:
         if tier == "memory":
             trace["handled"] = self._handled
             trace["handler_ungrounded"] = self._handler_ungrounded
+            trace["memory_source"] = self._memory_source
         learned = False
         score = None
         if learn and tier in ("local", "cloud") \
@@ -508,8 +627,12 @@ class Brain:
                     trace["truth_check_error"] = str(e)
                     do_learn = False
             if do_learn:
-                learned = self._learn(stripped_q or query, text, score)
+                source = "oracle" if tier == "cloud" else "local"
+                learned = self._learn(stripped_q or query, text, score,
+                                      source=source)
                 trace["learned"] = learned
+                if self._fact_status:
+                    trace["fact_status"] = self._fact_status
                 if not learned and self._learn_block_reason:
                     trace["learn_blocked"] = self._learn_block_reason
         return Answer(text=text, tier=tier, latency_ms=ms, intent=intent,
@@ -528,15 +651,41 @@ class Brain:
         return self.aiml.respond(query)
 
     def _tier_memory(self, query: str) -> str | None:
-        if not self.memory:
-            return None
-        hits = self.memory.search(query, top_k=1)
+        # Facts first: a (subject, predicate) lookup answers any
+        # phrasing that extracts to the same fact — even a novel
+        # paraphrase the AIML compiler never generated a pattern for.
+        if self._facts is not None:
+            try:
+                fact_answer = self._facts.answer(query)
+            except Exception:
+                fact_answer = None
+            if fact_answer:
+                self._memory_source = "facts"
+                return fact_answer
         floor = (self.cfg.vector_min_score
                  if self.memory_kind == "vector"
                  else self.cfg.memory_min_score)
-        if not hits or hits[0][3] < floor:
+        knowledge = None
+        # Library first: /ingest documents are CURATED (the user put
+        # them there), so a document chunk above the floor outranks a
+        # learned Q&A pair — which may itself be a confabulation the
+        # truth judge approved. Without this, the library was a
+        # separate store the ladder never read, and "who did John
+        # call the first BBS with" confabulated "The New World"
+        # instead of answering from mike.txt.
+        if self.memory is not None:
+            lib_hit = self._library_hit(query, floor)
+            if lib_hit is not None:
+                knowledge = lib_hit
+                self._memory_source = "library"
+        if knowledge is None and self.memory is not None:
+            hits = self.memory.search(query, top_k=1)
+            if hits and hits[0][3] >= floor:
+                knowledge = hits[0][1]
+                self._memory_source = "knowledge"
+        if knowledge is None:
+            self._memory_source = None
             return None
-        knowledge = hits[0][1]
         # handler mode: the datasets answer; the model only wields them
         if self.cfg.handler_mode and self.local:
             try:
@@ -546,7 +695,7 @@ class Brain:
                     % (knowledge, query),
                     max_tokens=self.cfg.local_max_tokens,
                     temperature=0.2)
-                if _numbers_grounded(presented, knowledge, query):
+                if _handler_grounded(presented, knowledge, query):
                     self._handled = True
                     return presented
                 # the handler invented figures: fall back to the raw
@@ -626,11 +775,26 @@ class Brain:
                 return f"AIML already answers {existing!r}"
         return None
 
-    def _learn(self, question: str, answer: str, score: float) -> bool:
+    def _learn(self, question: str, answer: str, score: float,
+               source: str = "local") -> bool:
         """Persist the STRIPPED pair. Returns True if it stuck.
         A conflict with existing knowledge blocks the write and
-        files a curiosity gap, so research can resolve it."""
+        files a curiosity gap, so research can resolve it.
+
+        Learning is two-layer now:
+        1. Fact layer (structured): the (question, answer) is distilled
+           to a (subject, predicate, object) fact. A conflicting fact
+           with >= confidence blocks the whole learn — this is the
+           paraphrase-robust conflict check (same meaning, different
+           wording). On learn/supersede, the fact's compiled AIML
+           patterns are (re)registered so the instant tier answers
+           from the new fact.
+        2. Raw-pair layer (unchanged): the pair still goes to
+           learned.aiml + the vector memory, so nothing is lost for
+           pairs that don't extract to a fact.
+        """
         self._learn_block_reason = None
+        self._fact_status = None
         conflict = self._find_conflict(question, answer)
         if conflict:
             self._learn_block_reason = conflict
@@ -640,6 +804,32 @@ class Brain:
                 except Exception:
                     pass
             return False
+        # --- fact layer ---
+        if self._facts is not None:
+            try:
+                result = self._facts.learn(question, answer,
+                                           confidence=score, source=source)
+                self._fact_status = result["status"]
+                if result["status"] == "blocked":
+                    ex = result["existing"]
+                    self._learn_block_reason = (
+                        f"Fact store already has {ex.subject} "
+                        f"{ex.predicate} = {ex.object}")
+                    if self.gap_log is not None:
+                        try:
+                            self.gap_log.note_gap(question)
+                        except Exception:
+                            pass
+                    return False
+                if result["status"] in ("learned", "superseded") \
+                        and result["fact"] is not None \
+                        and self.aiml is not None:
+                    for pat, tpl in (
+                            (p, result["fact"].render())
+                            for p in result["fact"].patterns()):
+                        self.aiml.learn_compiled(pat, tpl)
+            except Exception:
+                self._fact_status = "error"
         q = " ".join(question.split())
         a = " ".join(answer.split())
         if not q or not a or len(q) > 300:
@@ -661,5 +851,15 @@ class Brain:
         return ok
 
     def close(self) -> None:
+        if self._facts is not None:
+            try:
+                self._facts.close()
+            except Exception:
+                pass
         if self.memory:
             self.memory.close()
+        if self._lib:
+            try:
+                self._lib.close()
+            except Exception:
+                pass

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>CETI // Console Log &mdash; Day v3</title><style>
+body { background:#40318d; color:#EDEBFF; font-family:"Courier New",monospace;
+  font-size:17px; max-width:760px; margin:0 auto; padding:24px;
+  line-height:1.75; }
+h1,h2,h3 { color:#FFFFFF; }
+a { color:#8FD8FF; }
+video { width:100%; background:#000; border:2px solid #8A80E8; }
+.beat,.step { border:1px solid #8A80E8; padding:12px 16px; margin:16px 0; }
+.q,.cmd { color:#FFFFFF; margin:0 0 4px; }
+.tag { color:#FFCF5E; margin:0 0 8px; }
+.src { color:#B8B0FF; font-size:0.85em; margin:8px 0 0; }
+pre { white-space:pre-wrap; word-wrap:break-word; margin:8px 0 0; }
+hr { border:0; border-top:1px solid #8A80E8; margin:32px 0; }
+nav { margin:16px 0; }
+</style></head><body>
+<h1>Console Log &mdash; Day v3</h1>
+<p>Every command and output from the command-and-control test run:
+calculator, dictionary, thesaurus, memopad, weather, memory, oracle,
+key auth. Dictionary/thesaurus fell back to the local word list
+(the dictionary API fetch did not return a usable entry); weather ran
+live off wttr.in.</p>
+<nav><a href="index.html">day</a> &middot; <a href="blog.html">blog</a> &middot; <a href="log.html">console log</a></nav><hr>
+<div class='step'><p class='cmd'>$ what is 2400 * 8</p><pre>[calc] (499 t/s)
+19200</pre></div>
+<div class='step'><p class='cmd'>$ what is 15% of 2400</p><pre>[calc] (499 t/s)
+360</pre></div>
+<div class='step'><p class='cmd'>$ what is sqrt(65536)</p><pre>[calc] (499 t/s)
+256</pre></div>
+<div class='step'><p class='cmd'>$ dictionary cypherpunk</p><pre>cypherpunk
+- Someone who uses cryptography to defend privacy and free speech — &#x27;privacy for the weak, transparency for the powerful&#x27;.</pre></div>
+<div class='step'><p class='cmd'>$ dictionary modem</p><pre>modem
+- A device that modulates a digital signal onto a telephone line and demodulates it back — the bridge between a computer and the phone network.</pre></div>
+<div class='step'><p class='cmd'>$ thesaurus cipher</p><pre>cipher
+synonyms: code, cryptogram</pre></div>
+<div class='step'><p class='cmd'>$ thesaurus gold</p><pre>gold
+synonyms: currency, loot</pre></div>
+<div class='step'><p class='cmd'>$ memopad append Day log: console up. 2400 baud memories ...</p><pre>noted.</pre></div>
+<div class='step'><p class='cmd'>$ memopad append Mike, mid-90s, C64, 2400 baud — before t...</p><pre>noted.</pre></div>
+<div class='step'><p class='cmd'>$ memopad append Cypherpunk note: own the machine, own th...</p><pre>noted.</pre></div>
+<div class='step'><p class='cmd'>$ memopad read</p><pre>[2026-10-17 00:19 UTC] Day log: console up. 2400 baud memories loaded.
+[2026-10-17 00:19 UTC] Mike, mid-90s, C64, 2400 baud — before the 386DX40.
+[2026-10-17 00:19 UTC] Cypherpunk note: own the machine, own the data, own the mind.</pre></div>
+<div class='step'><p class='cmd'>$ weather Toronto</p><pre>Toronto, Canada: Overcast , 8°C, humidity 66%, wind 19 km/h NNW</pre></div>
+<div class='step'><p class='cmd'>$ what is a 2400 baud modem</p><pre>[local] (5 t/s)
+The 2400 Baud Modem
+
+Before broadband, before dial-up at 56k, there was the 2400 baud modem.
+2400 baud meant 2400 bits per second — roughly 240 characters per
+second, about as fast as a person can read out loud. A page of text
+took seconds. A file took minutes. A big file took a phone call you
+did not want to pay for.
+
+The 2400 baud modem spoke V.22bis. You dialed with Hayes AT commands:
+ATDT and the number, then the handshake — the clicks, the tones, the
+hiss settling into carrier. When it connected, the modem printed
+CONNECT 2400 and you were in.
+
+We used a Commodore 64. The modem plugged into the user port or a
+cartridge interface, and the terminal program turned the TV into a
+window onto another computer. 2400 baud felt fast after 300. It felt
+like the future. It was the speed at which the BBS world ran, and
+the BBS world was the whole online world we had. [memory_source=library]</pre></div>
+<div class='step'><p class='cmd'>$ who did john call the first bbs with</p><pre>[local] (0 t/s)
+Mike [memory_source=library]</pre></div>
+<div class='step'><p class='cmd'>$ what was introduction date of commodore 64</p><pre>[local] (499 t/s)
+The Commodore 64 was introduced in January 1982 by Commodore International. [memory_source=None]</pre></div>
+<div class='step'><p class='cmd'>$ what is a bbs</p><pre>[local] (0 t/s)
+A BBS, or Bulletin Board System, is a type of online community where users can post messages, share files, and interact with each other. [memory_source=library]</pre></div>
+<div class='step'><p class='cmd'>$ oracle: what is an intel 80386dx40</p><pre>[oracle +learned] (0 t/s)
+Intel 80386DX40. A 32-bit x86 microprocessor clocked at 40 MHz. The &quot;DX&quot; designation means a full 32-bit data and address bus—4GB addressable memory, native protected-mode multitasking, the definitive step up from the 16-bit 286. Late-80s silicon; the speed king of the 386 line before the 486 usurped it. No MMX, no superscalar—just straight 32-bit iron at 40MHz.</pre></div>
+<div class='step'><p class='cmd'>$ keyauth demo</p><pre>node jn16c7f61a3a1372b3e15dc2201b897e7bafa71faba (CETI-6C7F-61A3-A137)
+challenge: auth:jn16c7f61a3a1372b3e15dc2201b897e7bafa71faba:212616d41f16f3fc:1792196559
+verified: True
+wrong challenge rejected: True
+wrong signature rejected: True</pre></div>
+
+<hr><p>own the machine, own the data, own the mind.<br>CETI // sovereign local brain &mdash; github.com/virtuehearts/ceti</p></body></html>

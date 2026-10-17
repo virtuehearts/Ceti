@@ -20,7 +20,12 @@ Execution policy:
 
 from __future__ import annotations
 
+import json
 import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 from . import sandbox as _sandbox
@@ -435,3 +440,221 @@ def execute(tool_name: str, **kwargs) -> ToolResult:
                           error="no such tool: %r (see /tools)"
                           % tool_name)
     return tool.execute(**kwargs)
+
+
+# ---- C2 console tools: dictionary / thesaurus / memopad / weather --
+# The day-of-use console: a command-and-control system needs a
+# dictionary, a thesaurus, a memopad, and the weather — the same
+# four things a sysop's desk has. Dictionary/thesaurus/weather
+# fetch from free no-key APIs; a local word list covers the day's
+# vocabulary when the network is down. Weather fails LOUD (a
+# fabricated forecast is worse than none).
+
+_LOCAL_WORDS = {
+    "modem": ("A device that modulates a digital signal onto a "
+              "telephone line and demodulates it back — the bridge "
+              "between a computer and the phone network.",
+              ["coupler", "interface"]),
+    "baud": ("Signalling rate: symbols per second. A 2400 baud "
+             "modem sends 2400 symbols per second.",
+             ["rate", "speed"]),
+    "bulletin": ("A short public notice posted for a group to read.",
+                 ["notice", "announcement"]),
+    "cipher": ("A method for transforming a message so only the "
+               "intended reader can read it.",
+               ["code", "cryptogram"]),
+    "cypherpunk": ("Someone who uses cryptography to defend privacy "
+                   "and free speech — 'privacy for the weak, "
+                   "transparency for the powerful'.",
+                   ["crypto-anarchist", "privacy advocate"]),
+    "commodore": ("Commodore International: maker of the PET, VIC-20, "
+                  "Commodore 64, and Amiga.",
+                  ["c64 maker"]),
+    "bbs": ("Bulletin Board System: a computer you dial into to "
+           "read messages and share files.",
+           ["board", "bulletin board"]),
+    "sysop": ("The system operator — the person who runs a BBS.",
+              ["operator", "host"]),
+    "gold": ("In Ultima Online, the in-game currency players farmed "
+             "and sold for real money — virtual goods with real value.",
+             ["currency", "loot"]),
+    "manifesto": ("A public declaration of principles and intent.",
+                  ["declaration", "creed"]),
+    "key": ("In cryptography, the secret that makes a signature or "
+            "an encryption yours.",
+            ["secret", "private key"]),
+    "signature": ("A cryptographic proof that a message came from the "
+                  "holder of a key — and was not altered.",
+                  ["seal", "attestation"]),
+}
+
+
+def _fetch_json(url: str, timeout_s: int = 10) -> object:
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "CETI/0.3.1 (sovereign local brain)"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        raise ToolError("fetch failed: HTTP %s" % e.code)
+    except Exception as e:
+        raise ToolError("fetch failed: %s" % e)
+
+
+def _tool_dictionary(word: str) -> str:
+    word = (word or "").strip().lower()
+    if not word:
+        raise ToolError("dictionary needs a word")
+    try:
+        data = _fetch_json(
+            "https://api.dictionaryapi.dev/api/v2/entries/en/"
+            + urllib.parse.quote(word))
+        entry = data[0] if isinstance(data, list) and data else None
+        if not entry:
+            raise ToolError("no definition found for %r" % word)
+        lines = [entry.get("word", word)]
+        for meaning in entry.get("meanings", [])[:2]:
+            pos = meaning.get("partOfSpeech", "")
+            for d in meaning.get("definitions", [])[:2]:
+                lines.append("- %s: %s" % (
+                    pos, d.get("definition", "")))
+        return "\n".join(lines)
+    except Exception:
+        pass  # API miss or unreachable: fall through to local list
+    if word in _LOCAL_WORDS:
+        definition, _syn = _LOCAL_WORDS[word]
+        return "%s\n- %s" % (word, definition)
+    raise ToolError("no definition found for %r" % word)
+
+
+def _tool_thesaurus(word: str) -> str:
+    word = (word or "").strip().lower()
+    if not word:
+        raise ToolError("thesaurus needs a word")
+    try:
+        data = _fetch_json(
+            "https://api.dictionaryapi.dev/api/v2/entries/en/"
+            + urllib.parse.quote(word))
+        entry = data[0] if isinstance(data, list) and data else None
+        if not entry:
+            raise ToolError("no entry found for %r" % word)
+        synonyms: list[str] = []
+        antonyms: list[str] = []
+        for meaning in entry.get("meanings", []):
+            for d in meaning.get("definitions", []):
+                synonyms += d.get("synonyms", []) or []
+                antonyms += d.get("antonyms", []) or []
+        if not synonyms and not antonyms:
+            return "%s: no synonyms or antonyms listed" % word
+        out = [word]
+        if synonyms:
+            out.append("synonyms: " + ", ".join(sorted(set(synonyms))[:10]))
+        if antonyms:
+            out.append("antonyms: " + ", ".join(sorted(set(antonyms))[:10]))
+        return "\n".join(out)
+    except Exception:
+        pass  # API miss or unreachable: fall through to local list
+    if word in _LOCAL_WORDS:
+        _definition, syns = _LOCAL_WORDS[word]
+        if syns:
+            return "%s\nsynonyms: %s" % (word, ", ".join(syns))
+        return "%s: no synonyms listed" % word
+    raise ToolError("no entry found for %r" % word)
+
+
+def _memopad_path() -> str:
+    return os.path.join(work_root(), "memopad.txt")
+
+
+def _tool_memopad(action: str, text: str = "",
+                  limit: int = 20) -> str:
+    action = (action or "").strip().lower()
+    if action == "append":
+        text = (text or "").strip()
+        if not text:
+            raise ToolError("memopad append needs text")
+        stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+        with open(_memopad_path(), "a", encoding="utf-8") as f:
+            f.write("[%s] %s\n" % (stamp, text))
+        return "noted."
+    if action == "read":
+        try:
+            with open(_memopad_path(), encoding="utf-8") as f:
+                lines = [ln.rstrip("\n") for ln in f if ln.strip()]
+        except OSError:
+            return "(memopad is empty)"
+        if not lines:
+            return "(memopad is empty)"
+        return "\n".join(lines[-max(1, int(limit)):])
+    if action == "clear":
+        with open(_memopad_path(), "w", encoding="utf-8") as f:
+            f.write("")
+        return "memopad cleared."
+    raise ToolError("memopad action must be append, read, or clear")
+
+
+def _tool_weather(place: str) -> str:
+    place = (place or "").strip()
+    if not place:
+        raise ToolError("weather needs a place")
+    data = _fetch_json(
+        "https://wttr.in/" + urllib.parse.quote(place) + "?format=j1")
+    try:
+        cur = data["current_condition"][0]
+        area = data.get("nearest_area", [{}])[0]
+        name = area.get("areaName", [{}])[0].get("value", place)
+        country = area.get("country", [{}])[0].get("value", "")
+        desc = cur.get("weatherDesc", [{}])[0].get("value", "?")
+        return ("%s, %s: %s, %s°C, humidity %s%%, wind %s km/h %s"
+                % (name, country, desc, cur.get("temp_C", "?"),
+                   cur.get("humidity", "?"),
+                   cur.get("windspeedKmph", "?"),
+                   cur.get("winddir16Point", ""))).strip()
+    except (KeyError, IndexError, TypeError):
+        raise ToolError("weather: unexpected response shape")
+
+
+_register(Tool(
+    name="dictionary",
+    description="Look up a word's definitions (free dictionary API; "
+                "a local word list covers the day's vocabulary "
+                "when the network is down).",
+    parameters=_schema(
+        {"word": {"type": "string", "description": "the word to define"}},
+        ["word"]),
+    side_effects="read", sandboxed=False, func=_tool_dictionary))
+_register(Tool(
+    name="thesaurus",
+    description="Look up a word's synonyms and antonyms (same free "
+                "dictionary API; local word list as fallback).",
+    parameters=_schema(
+        {"word": {"type": "string",
+                  "description": "the word to find synonyms for"}},
+        ["word"]),
+    side_effects="read", sandboxed=False, func=_tool_thesaurus))
+_register(Tool(
+    name="memopad",
+    description="The console memopad: append a timestamped line, "
+                "read the last N lines, or clear it. Lives in the "
+                "work root (memopad.txt).",
+    parameters=_schema(
+        {"action": {"type": "string",
+                    "description": "append, read, or clear"},
+         "text": {"type": "string",
+                  "description": "the line to append (append only)"},
+         "limit": {"type": "integer",
+                   "description": "newest N lines (read only, "
+                                  "default 20)",
+                   "default": 20}},
+        ["action"]),
+    side_effects="write", sandboxed=False, func=_tool_memopad))
+_register(Tool(
+    name="weather",
+    description="Current weather for a place (wttr.in, no key). "
+                "Fails loudly when the fetch fails — never invents "
+                "a forecast.",
+    parameters=_schema(
+        {"place": {"type": "string",
+                   "description": "city or place name"}},
+        ["place"]),
+    side_effects="read", sandboxed=False, func=_tool_weather))

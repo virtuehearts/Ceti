@@ -217,6 +217,23 @@ class AimlBrain:
         return "".join(out)
 
     # ---- learning ------------------------------------------------------
+    def learn_compiled(self, pattern: str, template: str) -> None:
+        """Register a fact-derived (pattern, template) in-memory only.
+
+        The fact store persists the fact (SQLite); these compiled
+        patterns are rebuilt from it on Brain startup. They are NOT
+        written to learned.aiml — that file holds raw pairs only.
+        override=True so a superseded fact replaces its old template
+        (same pattern strings, new answer).
+        """
+        pat = normalize_pattern(pattern)
+        if not pat:
+            return
+        tpl_el = ET.fromstring(
+            "<template>" + escape(template) + "</template>")
+        self._register(pat, tpl_el, priority=self.PRIO_LEARNED,
+                       override=True)
+
     def learn(self, question: str, answer: str) -> bool:
         """Promote a Q&A pair. Returns False if rejected/duplicate."""
         pattern = normalize_pattern(question)

@@ -1,15 +1,28 @@
 """tui — a full-screen terminal interface for CETI, Hermes-style.
 
-Full TUI with multiline editing, slash-command autocomplete,
-conversation history, interrupt-and-redirect, and a transcript
-pane. stdlib-only: curses, no new dependencies. The line REPL
-stays as the fallback when curses is unavailable.
+A BBS, not a chat window. Launch lands on the Main Menu (like
+Hermes: numbered doors, single-key choices, typing at the prompt).
+Door 1 is the AI — typing there asks CETI, inside the TUI. The
+line REPL stays as the fallback when curses is unavailable, and
+for the few doors that still live there (/task, /story, /share,
+/download, live /chat, /ingest).
 
 Layout:
   header    CETI + fingerprint + tier status
-  transcript  scrollable Q&A / command output (grows up)
-  input     multiline editor (Enter sends, Alt-Enter newline)
+  pane      Main Menu / submenu, or transcript (AI door / output)
+  input     prompt (menu choice, or AI question / command)
   footer    key hints
+
+Windows overflow fix: curses on Windows (windows-curses /
+PDCurses) misbehaves when text is written to the last column —
+writing exactly width chars at x=0, or anything into the
+bottom-right cell, scrolls or raises, and the old render()
+swallowed the error, leaving text hanging off the terminal.
+Two rules now, everywhere: (1) wrap, never truncate — long
+lines wrap to width-1 with word boundaries; (2) never write
+the last column — put() trims to width-x-1 and skips
+out-of-bounds rows. Tabs are expanded, \r / control chars
+stripped, before wrapping.
 
 Slash commands: typing / filters the command list into a popup
 under the input. Tab completes, Up/Down picks, Enter accepts.
@@ -40,6 +53,7 @@ cancels the old answer and starts the new one.
 from __future__ import annotations
 
 import os
+import textwrap
 import time
 
 from . import tui_sessions
@@ -53,12 +67,111 @@ COMMANDS = (
     "/download", "/tools", "/call", "/task", "/skills", "/ingest",
     "/story", "/stats", "/trace", "/tiers", "/heartbeat", "/tasks",
     "/agent", "/identity", "/benchmark", "/tui", "/quit",
+    "/menu", "/ai", "/evals", "/bus",
 )
+
+
+# ---- BBS menus (Hermes-style) -------------------------------------------
+# A menu is (title, [(key, label, action)]). Action is:
+#   ("menu", name)  -> open submenu
+#   ("ai",)         -> AI door: leave menu, typing asks CETI
+#   ("cmd", "/...") -> run that slash command inside the TUI
+#   ("quit",)       -> leave the TUI
+# The AI is door 1 — the only place the model is reached. Every
+# other door is local data / tools / status. Typing at the prompt
+# in a menu picks a door; typing in the AI door asks a question.
+MENUS: dict[str, tuple[str, list[tuple[str, str, tuple]]]] = {
+    "main": ("CETI // MAIN MENU", [
+        ("1", "AI — Ask CETI (typing here asks the model)", ("ai",)),
+        ("2", "Board — Read signed posts", ("menu", "board")),
+        ("3", "Mail — Inbox", ("menu", "mail")),
+        ("4", "Files — Work root / drop", ("menu", "files")),
+        ("5", "Node — Peers, identity, nodelist", ("menu", "node")),
+        ("6", "System — Stats, evals, bus, benchmark", ("menu", "system")),
+        ("7", "Library — Ingest / research status", ("menu", "library")),
+        ("0", "Goodbye — Leave the BBS", ("quit",)),
+    ]),
+    "board": ("BOARD", [
+        ("1", "List posts", ("cmd", "/board")),
+        ("2", "Read post 1 (oldest)", ("cmd", "/board read 1")),
+        ("0", "Back to Main Menu", ("menu", "main")),
+    ]),
+    "mail": ("MAIL", [
+        ("1", "Inbox", ("cmd", "/mail")),
+        ("0", "Back to Main Menu", ("menu", "main")),
+    ]),
+    "files": ("FILES", [
+        ("1", "List work root", ("cmd", "/files")),
+        ("0", "Back to Main Menu", ("menu", "main")),
+    ]),
+    "node": ("NODE", [
+        ("1", "Identity", ("cmd", "/identity")),
+        ("2", "Peers", ("cmd", "/peers")),
+        ("3", "Board", ("cmd", "/board")),
+        ("0", "Back to Main Menu", ("menu", "main")),
+    ]),
+    "system": ("SYSTEM", [
+        ("1", "Stats", ("cmd", "/stats")),
+        ("2", "Evals — coding / tool / knowledge", ("cmd", "/evals")),
+        ("3", "Bus — POST memory map", ("cmd", "/bus post")),
+        ("4", "Benchmark — self-exam", ("cmd", "/benchmark")),
+        ("5", "Tiers", ("cmd", "/tiers")),
+        ("0", "Back to Main Menu", ("menu", "main")),
+    ]),
+    "library": ("LIBRARY", [
+        ("1", "Library status", ("cmd", "/library")),
+        ("0", "Back to Main Menu", ("menu", "main")),
+    ]),
+}
+
+
+def menu_lines(name: str) -> list[str]:
+    """Render a menu as BBS text lines (no curses needed, tested)."""
+    title, options = MENUS[name]
+    lines = ["", f"  {title}", "  " + "=" * min(44, len(title) + 2)]
+    for key, label, _action in options:
+        lines.append(f"  [{key}] {label}")
+    lines.append("")
+    lines.append("  Your choice, SysOp? (type a number, /menu, /ai, /quit)")
+    return lines
 
 
 def complete_command(prefix: str) -> list[str]:
     """Commands matching a typed / prefix, in definition order."""
     return [c for c in COMMANDS if c.startswith(prefix)]
+
+
+# ---- wrapping / safe output (Windows overflow fix) ----------------------
+def clean_line(line: str) -> str:
+    """Tabs -> spaces, strip \\r and control chars (keep \\n splits
+    done by the caller). Curses on Windows renders tabs and control
+    chars unpredictably; plain text is the only safe input."""
+    line = line.replace("\t", "    ").replace("\r", "")
+    return "".join(ch for ch in line if ch >= " " or ch == "\x1b")
+
+
+def wrap_lines(lines: list[str], width: int) -> list[str]:
+    """Wrap every logical line to width-1 (never the last column),
+    word boundaries, long words broken. Short lines pass through
+    unchanged — Transcript.render for short lines is identical to
+    the old truncate behavior, which the tests pin down."""
+    if width <= 1:
+        return []
+    avail = max(1, width - 1)
+    out: list[str] = []
+    for raw in lines:
+        line = clean_line(raw)
+        if len(line) <= avail:
+            out.append(line)
+            continue
+        # textwrap handles word boundaries; break_long_words covers
+        # URLs / long tokens that would otherwise overflow.
+        wrapped = textwrap.wrap(
+            line, width=avail, break_long_words=True,
+            break_on_hyphens=False, expand_tabs=False,
+            replace_whitespace=False, drop_whitespace=True)
+        out.extend(wrapped or [""])
+    return out
 
 
 # ---- colour -----------------------------------------------------------
@@ -272,9 +385,14 @@ class Transcript:
     def render(self, height: int, width: int) -> list[str]:
         if height <= 0:
             return []
+        # Scroll offset stays in LOGICAL lines (tests pin this);
+        # wrapping happens after windowing, so short lines render
+        # exactly as before and long lines wrap instead of truncating.
         end = len(self.lines) - self.offset
         start = max(0, end - height)
-        return [ln[:width] for ln in self.lines[start:end]]
+        wrapped = wrap_lines(self.lines[start:end], width)
+        # A wrapped block can exceed the pane: show its tail.
+        return wrapped[-height:] if len(wrapped) > height else wrapped
 
 
 class TUI:
@@ -295,6 +413,9 @@ class TUI:
         self.completions: list[str] = []
         self.comp_idx: int = 0
         self.running = True
+        # BBS: launch lands on the Main Menu. None = AI door (typing
+        # asks CETI). /menu returns here from anywhere.
+        self.menu: str | None = "main"
         self._esc = False  # Alt-Enter lookahead: ESC then Enter
         # streaming state (see _pump_stream)
         self._stream = None
@@ -308,8 +429,8 @@ class TUI:
         fp = getattr(getattr(brain, "identity", None),
                      "fingerprint", "?")
         self.transcript.add(
-            f"CETI // {fp} — /help for keys + commands, "
-            f"Ctrl-C cancels, /quit leaves.")
+            f"CETI // {fp} — BBS. Door 1 is the AI. "
+            f"/menu main, /ai chat, /help keys, /quit leaves.")
 
     # ---- sessions ---------------------------------------------------
     def _save_session(self) -> None:
@@ -324,6 +445,61 @@ class TUI:
         self.session = session
         self.transcript.lines = list(session.lines)
         self.transcript.offset = 0
+
+    # ---- BBS menus ----------------------------------------------------
+    def _choose_menu(self, text: str) -> bool:
+        """Handle one line typed at a menu prompt. Returns True if
+        the line was consumed as a menu choice. Menu keys ("0".."7")
+        come from MENUS — on main "0" is Goodbye, on a submenu "0"
+        is Back. Slash escapes (/quit, /menu, /ai, any /command)
+        work from any menu."""
+        raw = text.strip()
+        if not raw:
+            return True
+        low = raw.lower()
+        if low in ("/quit", "q", "goodbye"):
+            self.running = False
+            return True
+        if low in ("/menu", "menu"):
+            self.menu = "main"
+            return True
+        if low in ("/ai", "ai"):
+            self.menu = None
+            self.transcript.add("(AI door — type to ask. /menu to go back.)")
+            return True
+        if self.menu is None:
+            return False
+        _title, options = MENUS[self.menu]
+        for key, _label, action in options:
+            if raw == key:
+                kind = action[0]
+                if kind == "menu":
+                    self.menu = action[1]
+                elif kind == "ai":
+                    self.menu = None
+                    self.transcript.add(
+                        "(AI door — type to ask. /menu to go back.)")
+                elif kind == "quit":
+                    self.running = False
+                elif kind == "cmd":
+                    self.menu = None
+                    self.transcript.add(f"you> {action[1]}")
+                    self._run_command(action[1])
+                    self.transcript.add(
+                        "(type /menu to return to the Main Menu)")
+                return True
+        # Not a menu key: a slash command runs and leaves the menu
+        # (output shows in the transcript); anything else complains.
+        if raw.startswith("/"):
+            self.menu = None
+            self.transcript.add(f"you> {raw}")
+            self._run_command(raw)
+            self.transcript.add(
+                "(type /menu to return to the Main Menu)")
+            return True
+        self.transcript.add(
+            f"(unknown choice '{raw}' — type a number, /menu, /ai, /quit)")
+        return True
 
     # ---- completion -------------------------------------------------
     def _update_completions(self) -> None:
@@ -476,10 +652,151 @@ class TUI:
             self.transcript.add(
                 "keys: Enter send · Alt-Enter newline · Tab complete\n"
                 "      Up/Down history or completions · Ctrl-C cancel\n"
+                "bbs: /menu main menu · /ai AI door (typing asks)\n"
+                "     1-7 pick a door · 0 back / goodbye\n"
                 "chats: /new fresh chat · /sessions list saved\n"
                 "       /resume <id> reopen · /delete <id> remove\n"
-                "node: /identity /peers /board · /gopher in the REPL\n"
+                "doors: /board /mail /files /identity /peers\n"
+                "       /stats /evals /bus /benchmark /tiers\n"
                 "/quit leaves the TUI")
+        elif cmd == "/menu":
+            self.menu = "main"
+            self.transcript.add("(Main Menu — pick a door)")
+        elif cmd == "/ai":
+            self.menu = None
+            self.transcript.add("(AI door — type to ask. /menu to go back.)")
+        elif cmd == "/evals":
+            from . import evals as _ev
+            _suite = arg.strip() or "all"
+            if _suite not in ("all", "knowledge", "coding", "tool"):
+                self.transcript.add("usage: /evals [all|knowledge|coding|tool]")
+                return
+            self.transcript.add("evals running — coding hits the local model...")
+            try:
+                _rep = _ev.EvalRunner(
+                    self.brain, gap_log=getattr(self.brain, "gap_log", None)
+                ).run(None if _suite == "all" else _suite)
+                for _name, _d in _rep["suites"].items():
+                    self.transcript.add(
+                        f"  {_name}: {_d['passed']}/{_d['total']} ({_d['accuracy']:.0%})")
+                self.transcript.add(
+                    f"  overall: {_rep['passed']}/{_rep['total']} "
+                    f"({_rep['accuracy']:.0%}) in {_rep['elapsed_s']}s")
+                for _r in _rep["results"]:
+                    _mark = "PASS" if _r["passed"] else "FAIL"
+                    self.transcript.add(f"  [{_mark}] {_r['id']}: {_r['detail'][:120]}")
+            except Exception as e:
+                self.transcript.add(f"evals error: {e}")
+        elif cmd == "/bus":
+            from . import bus as _bus
+            _parts = text.split()
+            _sub = _parts[1] if len(_parts) > 1 else "post"
+            _q = " ".join(_parts[2:]) if len(_parts) > 2 else ""
+            try:
+                from . import ingest as _ing
+                try:
+                    _lib = _ing.Library(self.brain.cfg.data_dir)
+                except Exception:
+                    _lib = None
+                _b = _bus.MemoryBus.from_brain(self.brain, library=_lib)
+                try:
+                    if _sub == "post":
+                        import json as _json
+                        self.transcript.add(_json.dumps(_b.post(), indent=1))
+                    elif _sub == "read":
+                        if not _q:
+                            self.transcript.add("usage: /bus read <question>")
+                        else:
+                            _r = _b.read(_q)
+                            for _f in _r.frames:
+                                self.transcript.add(f"  [{_f.store}] {_f.text[:300]}")
+                            for _g in _r.gaps:
+                                self.transcript.add(f"  [gap] {_g.question}")
+                    elif _sub == "compile":
+                        if not _q:
+                            self.transcript.add("usage: /bus compile <topic>")
+                        else:
+                            _c = _b.compile(_q, intent="article")
+                            self.transcript.add(
+                                f"  local coverage: {_c.local_coverage:.0%} "
+                                f"frames={len(_c.frames)} gaps={len(_c.gaps)}")
+                            for _g in _c.gaps:
+                                self.transcript.add(f"  [gap] {_g.question}")
+                    else:
+                        self.transcript.add("usage: /bus post|read|compile")
+                finally:
+                    if _lib is not None:
+                        _lib.close()
+            except Exception as e:
+                self.transcript.add(f"bus error: {e}")
+        elif cmd == "/stats":
+            try:
+                import json as _json
+                self.transcript.add(_json.dumps(
+                    getattr(self.brain, "stats", {}), indent=1)[:1500])
+            except Exception as e:
+                self.transcript.add(f"stats error: {e}")
+        elif cmd == "/tiers":
+            try:
+                from . import decide as _dec
+                for _intent in ("smalltalk", "command", "factual", "chat"):
+                    self.transcript.add(
+                        f"  {_intent}: {', '.join(_dec.plan(_intent, self.brain.cfg))}")
+            except Exception as e:
+                self.transcript.add(f"tiers error: {e}")
+        elif cmd == "/benchmark":
+            try:
+                from . import benchmark as _bm
+                import json as _json
+                self.transcript.add("self-exam running...")
+                self.transcript.add(_json.dumps(
+                    _bm.run(self.brain, store=getattr(self.brain, "gap_log", None)),
+                    indent=1)[:2000])
+            except Exception as e:
+                self.transcript.add(f"benchmark error: {e}")
+        elif cmd == "/mail":
+            try:
+                from .mail import MailBox
+                _ident = getattr(self.brain, "identity", None)
+                if _ident is None:
+                    self.transcript.add("no identity: ecdsa not installed")
+                else:
+                    _valid, _rej = MailBox(self.brain.cfg.data_dir).inbox(
+                        _ident.fingerprint)
+                    for _i, _m in enumerate(_valid, 1):
+                        self.transcript.add(
+                            f"  {_i}. [{_m['from']['fingerprint']}] "
+                            f"{_m['subject']}")
+                    if _rej:
+                        self.transcript.add(
+                            f"  ! {len(_rej)} rejected (bad signature)")
+                    if not _valid:
+                        self.transcript.add("  (inbox empty)")
+            except Exception as e:
+                self.transcript.add(f"mail error: {e}")
+        elif cmd == "/files":
+            try:
+                from . import tools as _tools
+                self.transcript.add(_tools.execute("list_dir", path=".").content)
+            except Exception as e:
+                self.transcript.add(f"files error: {e}")
+        elif cmd == "/library":
+            try:
+                from . import ingest as _ing
+                _lib = _ing.Library(self.brain.cfg.data_dir)
+                try:
+                    _docs = _lib.docs()
+                    for _d in _docs:
+                        self.transcript.add(
+                            f"  {_d['filename']}: {_d['chunks']} chunks")
+                    self.transcript.add(
+                        f"  total: {_lib.count_chunks()} chunks")
+                    if not _docs:
+                        self.transcript.add("  (library empty — /ingest in the REPL)")
+                finally:
+                    _lib.close()
+            except Exception as e:
+                self.transcript.add(f"library error: {e}")
         elif cmd == "/new":
             self._save_session()
             self._open_session(tui_sessions.new_session())
@@ -536,8 +853,9 @@ class TUI:
         elif text == "/tui":
             self.transcript.add("(already in the TUI)")
         elif text == "/gopher":
-            self.transcript.add("gopher: use the line REPL for the "
-                                "menu, or /board /chat /mail here")
+            # Gopher menu IS the BBS Main Menu now — same doors.
+            self.menu = "main"
+            self.transcript.add("(Gopher menu — Main Menu, pick a door)")
         elif text == "/identity":
             ident = getattr(self.brain, "identity", None)
             self.transcript.add(
@@ -551,9 +869,25 @@ class TUI:
                 self.transcript.add(f"  {p['fingerprint']}")
             if not plist:
                 self.transcript.add("  (no peers yet)")
-        elif text == "/board":
+        elif cmd == "/board":
             from .board import Board
-            valid, rejected = Board(self.brain.cfg.data_dir).list()
+            _b = Board(self.brain.cfg.data_dir)
+            if arg.startswith("read"):
+                _n = arg.split()[1] if len(arg.split()) > 1 else ""
+                try:
+                    _num = int(_n)
+                except ValueError:
+                    self.transcript.add("usage: /board read <n>")
+                    return
+                _post = _b.read(_num)
+                if _post is None:
+                    self.transcript.add(f"(no post {_num})")
+                else:
+                    self.transcript.add(
+                        f"  [{_post['author']['fingerprint']}] "
+                        f"{_post['subject']}\n  {_post['body'][:1500]}")
+                return
+            valid, rejected = _b.list()
             for i, p in enumerate(valid, 1):
                 self.transcript.add(
                     f"  {i}. [{p['author']['fingerprint']}] "
@@ -580,6 +914,9 @@ class TUI:
         run loop converts it to a cancel."""
         if key == -1:
             return
+        if key == 410:  # KEY_RESIZE: terminal resized — next render
+            # reflows to the new size; nothing else to do.
+            return
         if self._esc:
             self._esc = False
             if key in (10, 13, 343):
@@ -598,8 +935,15 @@ class TUI:
             text = self.editor.text
             self.editor.clear()
             self.completions = []
-            if text.strip():
-                self._submit(text)
+            if not text.strip():
+                return
+            # BBS: at a menu, Enter picks a door; in the AI door,
+            # Enter asks. History records the line either way.
+            if self.menu is not None:
+                self.history.add(text)
+                self._choose_menu(text)
+                return
+            self._submit(text)
             return
         if key == 9:  # Tab: complete
             self._apply_completion()
@@ -656,9 +1000,19 @@ class TUI:
                 return
 
             def put(y, x, s, attr=0):
-                # 3-arg addstr when colour is off: keeps the
-                # minimal screen contract (old fakes take 3 args).
-                # A screen that rejects attrs degrades to plain.
+                # SAFE put — the Windows overflow fix. Never write
+                # the last column (x + len(s) >= width scrolls or
+                # raises on windows-curses), never write outside
+                # the screen, never write an empty string at the
+                # bottom-right cell. 3-arg addstr when colour is
+                # off: keeps the minimal screen contract (old
+                # fakes take 3 args).
+                if y < 0 or y >= height or x < 0 or x >= width:
+                    return
+                avail = width - x - 1  # leave the last column empty
+                s = s[:max(0, avail)]
+                if not s:
+                    return
                 if attr:
                     try:
                         screen.addstr(y, x, s, attr)
@@ -670,27 +1024,37 @@ class TUI:
             fp = getattr(getattr(self.brain, "identity", None),
                          "fingerprint", "?")
             header = f" CETI // {fp} // {self.session.title} "
-            put(0, 0, header.ljust(width)[:width],
+            put(0, 0, header.ljust(width),
                 _ATTRS.get("header", 0))
-            # transcript pane: everything between header and input
+            # pane: menu (BBS) or transcript (AI door / output)
             input_h = max(3, len(self.editor.lines) + 1)
             pane_h = height - 1 - input_h - 1
-            lines = self.transcript.render(pane_h, width)
+            if self.menu is not None:
+                # Menu + the last transcript lines above it (context:
+                # unknown-choice notes, command output) — menu last
+                # so it stays visible at the bottom of the pane.
+                ctx = self.transcript.render(
+                    max(0, pane_h - len(menu_lines(self.menu)) - 1),
+                    width)
+                lines = ctx + menu_lines(self.menu)
+                lines = wrap_lines(lines, width)[-pane_h:]
+            else:
+                lines = self.transcript.render(pane_h, width)
             if self._streaming():
                 # in-progress answer, below the tag line, with a
                 # live cursor — not in the transcript yet, so a
                 # cancel leaves no half-saved text behind
                 buf_lines = (self._stream_buf + "▍").split("\n")
-                lines = (lines + [ln[:width] for ln in buf_lines])
+                lines = (lines + wrap_lines(buf_lines, width))
                 lines = lines[-pane_h:]
             for i, ln in enumerate(lines):
                 put(1 + i, 0, ln, attr_for(ln))
             # input box
             y0 = height - input_h - 1
             put(y0, 0, "─" * width, _ATTRS.get("system", 0))
+            _prompt = "choice> " if self.menu is not None else "you> "
             for i, ln in enumerate(self.editor.lines):
-                put(y0 + 1 + i, 0,
-                    ("you> " + ln)[:width],
+                put(y0 + 1 + i, 0, _prompt + ln,
                     _ATTRS.get("user", 0))
             # completion popup
             if self.completions:
@@ -700,13 +1064,14 @@ class TUI:
                         "popup_sel" if i == self.comp_idx else "system",
                         0)
                     put(y0 + 1 + len(self.editor.lines) + i,
-                        2, f"{marker} {c}"[:width], attr)
+                        2, f"{marker} {c}", attr)
             # footer
-            put(height - 1, 0,
-                " Enter send · Alt-Enter newline · /new /help · "
-                "Tab complete · Up/Down history · "
-                "Ctrl-C cancel · /quit leaves."[:width],
-                _ATTRS.get("system", 0))
+            _foot = (" Enter pick · /ai chat · /menu · /quit leaves."
+                     if self.menu is not None else
+                     " Enter send · Alt-Enter newline · /menu · "
+                     "Tab complete · Up/Down history · "
+                     "Ctrl-C cancel · /quit leaves.")
+            put(height - 1, 0, _foot, _ATTRS.get("system", 0))
             try:
                 screen.curs_set(1)
             except Exception:
@@ -757,6 +1122,17 @@ def run_tui(brain, ask_fn=None) -> None:
         try:
             stdscr.timeout(100)
             curses.curs_set(1)
+            # Windows-safe: never auto-scroll on bottom-right writes,
+            # and decode arrow/function keys (keypad) so Up/Down,
+            # resize (KEY_RESIZE), and Alt-Enter arrive as codes.
+            try:
+                stdscr.scrollok(False)
+            except Exception:
+                pass
+            try:
+                stdscr.keypad(True)
+            except Exception:
+                pass
         except Exception:
             pass
         init_palette()

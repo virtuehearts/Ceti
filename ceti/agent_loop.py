@@ -58,6 +58,11 @@ with job_poll; stop runaways with job_kill.
 - Prefer doing over asking: use the tools, observe the results, iterate.
 - Record important findings, decisions, and facts with record_note so \
 they survive the session.
+- When the task says to build from a draft / source file, preserve \
+that file's content VERBATIM — do not drop, summarize, paraphrase, \
+or "improve" any part of it. Read the whole source, then reproduce \
+every paragraph, list item, and line in the output. Dropping a \
+paragraph is a failure, even if the rest looks good.
 - When the task is complete, reply in plain text with NO further tool \
 calls. Be concise: what was done, what the result was.
 - If a task is impossible with the tools available, say so plainly \

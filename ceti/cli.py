@@ -175,6 +175,25 @@ def main() -> int:
                 finally:
                     sess.close()
                 continue
+            if line == "/oracle" or line.startswith("/oracle "):
+                q = line[len("/oracle "):].strip()
+                if not q:
+                    print("usage: /oracle <question>")
+                    continue
+                # The oracle is the cloud tier with the whole ladder
+                # skipped: no calc, no AIML, no memory, no local.
+                # PII is still stripped before anything leaves the box.
+                if not any(getattr(b, "api_key", None)
+                           for b in brain.clouds):
+                    print("oracle needs a cloud backend with an API "
+                          "key (OPENROUTER_API_KEY or NVIDIA_API_KEY).")
+                    continue
+                ans = brain.ask(q, force_tier="cloud")
+                print(ans.display_tag)
+                print(ans.text)
+                if show_trace:
+                    print(json.dumps(ans.trace, indent=1)[:2000])
+                continue
             if line == "/skills" or line.startswith("/skills "):
                 from . import skills as _skills
                 _loader = _skills.get_loader()
@@ -785,6 +804,29 @@ def main() -> int:
                 print("self-exam running...")
                 print(json.dumps(
                     _bm.run(brain, store=agent.tasks), indent=1)[:2500])
+                continue
+            if line == "/evals" or line.startswith("/evals "):
+                from . import evals as _ev
+                _suite = line.split(None, 1)[1].strip() \
+                    if len(line.split(None, 1)) > 1 else "all"
+                if _suite not in ("all", "knowledge", "coding", "tool"):
+                    print("usage: /evals [all|knowledge|coding|tool]")
+                    continue
+                print("evals running (%s) — coding hits the local "
+                      "model, this takes a bit..." % _suite)
+                _runner = _ev.EvalRunner(brain, gap_log=agent.tasks)
+                _rep = _runner.run(None if _suite == "all" else _suite)
+                for _name, _d in _rep["suites"].items():
+                    print(f"  {_name}: {_d['passed']}/{_d['total']} "
+                          f"({ _d['accuracy']:.0%})")
+                print(f"  overall: {_rep['passed']}/{_rep['total']} "
+                      f"({ _rep['accuracy']:.0%}) in "
+                      f"{_rep['elapsed_s']}s")
+                for _r in _rep["results"]:
+                    _mark = "PASS" if _r["passed"] else "FAIL"
+                    print(f"  [{_mark}] {_r['id']}: {_r['detail'][:160]}")
+                if _rep["misses"]:
+                    print("  misses filed as gaps (curiosity feed).")
                 continue
             if line == "/tiers":
                 from . import decide
