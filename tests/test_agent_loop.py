@@ -258,3 +258,15 @@ class TestAgentLoop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAgentDraftFidelity(unittest.TestCase):
+    """The agent's system prompt must carry the verbatim rule:
+    building from a draft/source file preserves it whole — dropping
+    a paragraph is a failure."""
+
+    def test_system_prompt_has_verbatim_rule(self):
+        from ceti.agent_loop import _AGENT_SYSTEM
+        self.assertIn("VERBATIM", _AGENT_SYSTEM)
+        self.assertIn("do not drop", _AGENT_SYSTEM.lower())
+        self.assertIn("paragraph", _AGENT_SYSTEM.lower())

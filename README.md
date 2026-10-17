@@ -71,6 +71,7 @@ Type a question. Useful REPL commands:
 | `/research`  | Research config: sites, topics, interests, nightly budget |
 | `/tools`     | List the tool registry                       |
 | `/task`      | Hand the cloud oracle a task; it drives tools |
+| `/oracle`    | Skip memory/local; answer from the cloud oracle |
 | `/skills`    | List / reload SKILL.md bundles               |
 | `/ingest`    | Scan `data/library/` into vector memory      |
 | `/story`     | Oracle paper writer (new/write/status/compile/list) |
@@ -128,11 +129,29 @@ In handler mode the local model is instructed to present retrieved knowledge rat
 
 1. The ladder answers.
 2. Every generated answer is scored by the relevance classifier:
-   - **≥ 0.65** → promote into `learned.aiml` (next time it answers in ~0 ms)
+   - **≥ 0.65** → promote (fact layer + raw pair, below)
    - **0.45–0.65** → local adjudication
    - **< 0.45** → discard
 3. Promoted knowledge accumulates until you cut a signed release.
 4. Questions that repeatedly fail become curiosity tasks for the idle researcher.
+
+Learning is two-layer. The **fact layer** distills a (question,
+answer) into a structured fact — (subject, predicate, object) +
+confidence + source — stored in `data/facts.sqlite3`. One fact
+compiles to several AIML paraphrase patterns, so any wording that
+means the same thing answers from the same fact. A conflicting
+fact with >= confidence blocks the learn (same meaning, different
+wording — the old exact-question check missed that). The
+**raw-pair layer** (unchanged) still writes the pair to
+`learned.aiml` + the vector memory, so pairs that don't extract
+to a fact are never lost. See `docs/facts.md`.
+
+The idle researcher (auto-learn) routes distilled pairs through
+the same fact layer before writing them to a cassette — a
+conflicting distilled pair is dropped, never shipped. The memory
+tier's handler is grounding-checked on numbers AND words: an
+answer that invents most of its words falls back to the raw
+retrieved text.
 
 Relevance alone never proves truth — a confident confabulation
 scores like a true fact. So learning has two more gates before
@@ -221,6 +240,21 @@ The sandbox is pure-Python Linux namespaces: read-only system
 binds, no network, private `/work`, resource limits, wall-clock
 kill. Background jobs (`run_python_bg` / `job_poll` / `job_kill`)
 survive long runs.
+
+### C2 console tools + key auth
+
+The registry also carries the command-and-control desk:
+`dictionary`, `thesaurus`, `memopad` (append/read/clear a
+timestamped scratch pad), and `weather` (live, fails loud — never
+invents a forecast). Drive them with `/call <tool> key=value ...`
+or let `/task` use them.
+
+`ceti/keyauth.py` is simple key authentication on the regula-core
+identity: issue a challenge, sign it with the node key, verify
+against the public key. No passwords, no shared secrets; a
+signature for one challenge authenticates nothing else.
+`python -m ceti.keyauth` runs the round-trip demo (both negative
+cases rejected).
 
 ### Skills
 
@@ -334,6 +368,7 @@ ceti/               core package
   board.py          signed board posts
   boot.py           power-on self-test
   bus.py            unified memory bus — CETI as BIOS (see docs/bus.md)
+  evals.py          fixed benchmarks: coding / tool / knowledge
   brain.py          answer ladder and learning loop
   calc.py           deterministic math tier
   chat.py           live signed chat room
@@ -360,7 +395,7 @@ ceti/               core package
   vectormem.py      local embeddings
 data/               persona, seed, learned, cassettes, topics
 skills/             file-ops, sandbox-python, web-fetch, sqlite
-tests/              unit tests (395 green)
+tests/              unit tests (485 green)
 install.sh          one-shot setup
 run.sh              launcher
 ```

@@ -152,9 +152,11 @@ class TestTUILoop(unittest.TestCase):
             return FakeAnswer("hello back")
 
         t = TUI(brain, ask_fn=ask)
-        # -1 keys are poll ticks: give the answer thread time to
-        # finish and be collected before /quit exits the loop
-        keys = (type_keys("hello") + [10] + [-1] * 5
+        # BBS: launch lands on the Main Menu — pick door 1 (AI)
+        # first, then ask. -1 keys are poll ticks: give the answer
+        # thread time to finish and be collected before /quit exits.
+        keys = (type_keys("1") + [10]
+                + type_keys("hello") + [10] + [-1] * 5
                 + type_keys("/quit") + [10])
         self._drive(t, keys)
         self.assertEqual(answers, ["hello"])
@@ -192,6 +194,143 @@ class TestTUILoop(unittest.TestCase):
         t.handle_key(10)  # Enter -> newline, not send
         self.assertEqual(t.editor.lines, ["ab", ""])
         self.assertTrue(t.running)
+
+
+class TestWrapAndSafePut(unittest.TestCase):
+    def test_wrap_long_lines_never_exceed_width_minus_one(self):
+        # Windows overflow: no rendered line may touch the last column.
+        t = Transcript()
+        t.add("short")
+        t.add("word " * 30)  # 150 chars, must wrap at width 20
+        t.add("a" * 100)  # one long token, must break
+        out = t.render(50, 20)
+        self.assertTrue(all(len(ln) <= 19 for ln in out),
+                        out)
+        self.assertTrue(any("short" in ln for ln in out))
+
+    def test_wrap_short_lines_unchanged(self):
+        t = Transcript()
+        t.add("hello")
+        self.assertEqual(t.render(5, 80), ["hello"])
+
+    def test_wrap_tabs_and_cr(self):
+        t = Transcript()
+        t.add("a\tb\r c")
+        out = t.render(5, 80)
+        self.assertEqual(out, ["a    b c"])
+
+    def test_render_never_writes_last_column(self):
+        # FakeScreen records every addstr; safe put() must trim to
+        # width-x-1 so no call touches the last column.
+        class Screen:
+            def __init__(self):
+                self.calls = []
+
+            def getmaxyx(self):
+                return (24, 80)
+
+            def addstr(self, y, x, s, *a):
+                self.calls.append((y, x, s))
+
+            def erase(self):
+                pass
+
+            def refresh(self):
+                pass
+
+            def curs_set(self, n):
+                pass
+
+        t = TUI(FakeBrain(), ask_fn=lambda q: FakeAnswer("x"))
+        t.transcript.add("word " * 40)
+        screen = Screen()
+        t.render(screen)
+        for y, x, s in screen.calls:
+            self.assertLess(x + len(s), 80,
+                            f"addstr at ({y},{x}) len {len(s)} touches last col")
+            self.assertLessEqual(y, 23)
+
+
+class TestBBSMenu(unittest.TestCase):
+    def test_launch_lands_on_main_menu(self):
+        t = TUI(FakeBrain())
+        self.assertEqual(t.menu, "main")
+
+    def test_menu_pick_ai_door(self):
+        t = TUI(FakeBrain())
+        t.handle_key(ord("1"))
+        t.handle_key(10)
+        self.assertIsNone(t.menu)
+
+    def test_menu_pick_submenu_and_back(self):
+        t = TUI(FakeBrain())
+        t.handle_key(ord("6"))  # System
+        t.handle_key(10)
+        self.assertEqual(t.menu, "system")
+        t.handle_key(ord("0"))  # Back
+        t.handle_key(10)
+        self.assertEqual(t.menu, "main")
+
+    def test_menu_goodbye_quits(self):
+        t = TUI(FakeBrain())
+        t.handle_key(ord("0"))
+        t.handle_key(10)
+        self.assertFalse(t.running)
+
+    def test_menu_unknown_stays(self):
+        t = TUI(FakeBrain())
+        for c in "hello":
+            t.handle_key(ord(c))
+        t.handle_key(10)
+        self.assertEqual(t.menu, "main")
+        self.assertIn("unknown choice",
+                      "\n".join(t.transcript.lines))
+
+    def test_menu_slash_ai(self):
+        t = TUI(FakeBrain())
+        for c in "/ai":
+            t.handle_key(ord(c))
+        t.handle_key(10)
+        self.assertIsNone(t.menu)
+
+    def test_menu_slash_menu_returns(self):
+        t = TUI(FakeBrain())
+        t.menu = None
+        t._run_command("/menu")
+        self.assertEqual(t.menu, "main")
+
+    def test_menu_shows_in_render(self):
+        class Screen:
+            def __init__(self):
+                self.rows = {}
+
+            def getmaxyx(self):
+                return (24, 80)
+
+            def addstr(self, y, x, s, *a):
+                self.rows[y] = self.rows.get(y, "") + s
+
+            def erase(self):
+                pass
+
+            def refresh(self):
+                pass
+
+            def curs_set(self, n):
+                pass
+
+        t = TUI(FakeBrain())
+        screen = Screen()
+        t.render(screen)
+        joined = "\n".join(screen.rows.values())
+        self.assertIn("MAIN MENU", joined)
+        self.assertIn("[1] AI", joined)
+
+    def test_menu_resize_key_is_noop(self):
+        t = TUI(FakeBrain())
+        t.handle_key(410)  # KEY_RESIZE
+        self.assertTrue(t.running)
+        self.assertEqual(t.menu, "main")
 
 
 class TestTUISessions(unittest.TestCase):

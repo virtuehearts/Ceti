@@ -116,6 +116,116 @@ class TestResearcherWiring(unittest.TestCase):
         self.assertEqual(st["interests"], [])
         self.assertEqual(st["nightly_budget"]["max_topics"], 5)
 
+    def test_extract_pairs_pure_json(self):
+        from ceti.researcher import _extract_pairs
+        raw = ('[{"q": "What is the SID?", "a": "A sound chip."},'
+               ' {"q": "Who made it?", "a": "MOS Technology."}]')
+        pairs = _extract_pairs(raw)
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual(pairs[0]["q"], "What is the SID?")
+
+    def test_extract_pairs_prose_wrapped(self):
+        from ceti.researcher import _extract_pairs
+        raw = ('Here is the list:\n'
+               '[{"q": "What is the SID?", "a": "A sound chip."}]\n'
+               'Hope that helps.')
+        self.assertEqual(len(_extract_pairs(raw)), 1)
+
+    def test_extract_pairs_trailing_bracket_note(self):
+        # the old greedy \\[.*\\] spanned to the LAST ], so a trailing
+        # "[note: ...]" broke the parse and the topic distilled to 0
+        from ceti.researcher import _extract_pairs
+        raw = ('[{"q": "What is the SID?", "a": "A sound chip."}]\n'
+               '[note: check the 8580 date]')
+        self.assertEqual(len(_extract_pairs(raw)), 1)
+
+    def test_extract_pairs_invalid(self):
+        from ceti.researcher import _extract_pairs
+        self.assertEqual(_extract_pairs("no json here"), [])
+        self.assertEqual(_extract_pairs('{"q": "not a list"}'), [])
+
+    def test_distill_retries_after_garbage(self):
+        good = ('[{"q": "What is the SID?", "a": "A sound chip."}]')
+        calls = {"n": 0}
+
+        def fake_llm(prompt):
+            calls["n"] += 1
+            return "not json at all" if calls["n"] == 1 else good
+
+        self.r._llm = fake_llm
+        self.r._llm_cloud = lambda prompt: None
+        report = os.path.join(self.tmp, "rep.md")
+        with open(report, "w") as f:
+            f.write("# Report\nSome findings.\n")
+        pairs = self.r._distill(report, "SID")
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(calls["n"], 2)
+
+    def test_distill_falls_back_to_cloud(self):
+        good = ('[{"q": "What is the SID?", "a": "A sound chip."}]')
+        self.r._llm = lambda prompt: "garbage, no brackets"
+        self.r._llm_cloud = lambda prompt: good
+        report = os.path.join(self.tmp, "rep.md")
+        with open(report, "w") as f:
+            f.write("# Report\nSome findings.\n")
+        pairs = self.r._distill(report, "SID")
+        self.assertEqual(len(pairs), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResearcherFactGate(unittest.TestCase):
+    """The distiller-bypass fix: _record routes distilled pairs
+    through the fact layer. A pair that conflicts with an existing
+    fact is dropped — never written to the cassette or the memory
+    store."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.brain = make_test_brain(self.tmp)
+        topics = os.path.join(self.tmp, "topics.txt")
+        with open(topics, "w") as f:
+            f.write("commodore 64\n")
+        self.r = Researcher(self.brain, topics_file=topics)
+
+    def tearDown(self):
+        self.brain.close()
+
+    def test_conflicting_distilled_pair_blocked(self):
+        # Seed the fact store with the true fact.
+        self.brain._facts.learn(
+            "when was the commodore 64 introduced",
+            "The Commodore 64 was introduced in January 1982.",
+            confidence=0.9, source="research")
+        # A distilled pair that conflicts (different object).
+        added = self.r._record("commodore 64", [
+            {"q": "when was the commodore 64 introduced",
+             "a": "The Commodore 64 was introduced in 1977."}])
+        self.assertEqual(added, 0)
+        # Not in the cassette.
+        cassette = self.r.rack.path("commodore-64")
+        with open(cassette) as f:
+            self.assertNotIn("1977", f.read())
+        # The fact store still holds the true fact.
+        self.assertEqual(
+            self.brain._facts.active("Commodore 64", "introduced").object,
+            "January 1982")
+
+    def test_non_conflicting_distilled_pair_recorded(self):
+        added = self.r._record("commodore 64", [
+            {"q": "when was the commodore 64 introduced",
+             "a": "The Commodore 64 was introduced in January 1982."}])
+        self.assertEqual(added, 1)
+        cassette = self.r.rack.path("commodore-64")
+        with open(cassette) as f:
+            self.assertIn("January 1982", f.read())
+
+    def test_unstructured_pair_still_recorded(self):
+        # Pairs that don't extract to a fact pass through (the fact
+        # layer can't judge them — the human audit still applies).
+        added = self.r._record("commodore 64", [
+            {"q": "how do i call a bbs",
+             "a": "Dial the number, wait for the carrier, log in."}])
+        self.assertEqual(added, 1)

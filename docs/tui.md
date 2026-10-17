@@ -94,3 +94,50 @@ Sessions are separate from the agent loop's
   key queue (`tests/test_tui.py`), plus a real pty smoke
   test during development. The pure logic (editor, history,
   completion, transcript) is fully unit-tested.
+
+## BBS menus (Hermes-style)
+
+Launch lands on the Main Menu — numbered doors, type a number
+at the `choice>` prompt. The AI is door 1: typing there asks
+CETI, inside the TUI. No need to leave the TUI to ask, check
+the board, mail, node, or system.
+
+```
+ CETI // MAIN MENU
+ [1] AI — Ask CETI (typing here asks the model)
+ [2] Board — Read signed posts
+ [3] Mail — Inbox
+ [4] Files — Work root / drop
+ [5] Node — Peers, identity, nodelist
+ [6] System — Stats, evals, bus, benchmark
+ [7] Library — Ingest / research status
+ [0] Goodbye — Leave the BBS
+```
+
+Each door has a submenu (Board: list / read, Node: identity /
+peers / board, System: stats / evals / bus / benchmark / tiers,
+etc.). `0` is Back on a submenu, Goodbye on Main. `/menu`
+returns to Main from anywhere, `/ai` goes to the AI door,
+`/quit` leaves. Slash commands (`/board`, `/evals`, `/bus`,
+`/stats`, `/mail`, ...) work from any menu and leave the menu
+(output shows in the transcript); `/menu` brings the menu back.
+
+Still in the line REPL only: `/task`, `/story`, `/share`,
+`/download`, live `/chat`, `/ingest` — multi-step / backend
+doors that have not moved into the TUI yet.
+
+## Windows overflow fix
+
+curses on Windows (windows-curses / PDCurses) scrolls or raises
+when text is written to the last column — writing exactly
+`width` chars at x=0, or anything into the bottom-right cell.
+The old render swallowed the error, leaving text hanging off
+the terminal. Two rules now, everywhere:
+
+1. Wrap, never truncate — long lines wrap to width-1 with word
+   boundaries (long tokens broken). Tabs expanded, CR / control
+   chars stripped, before wrapping.
+2. Never write the last column — `put()` trims to width-x-1
+   and skips out-of-bounds rows. `scrollok(False)` +
+   `keypad(True)` in `run_tui`; KEY_RESIZE (410) just re-renders
+   (reflow to the new size).

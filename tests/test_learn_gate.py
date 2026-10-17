@@ -130,3 +130,43 @@ class TestContradictionCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHandlerGrounding(unittest.TestCase):
+    """Handler grounding is numbers AND words. The numbers check
+    alone misses confabulation with no figures."""
+
+    def test_grounded_answer_passes(self):
+        from ceti.brain import _handler_grounded
+        knowledge = ("Mike, his sister's friend, knew the numbers. "
+                     "John called the first BBSs with Mike in the mid-90s.")
+        self.assertTrue(_handler_grounded(
+            "John called the first BBSs with Mike.",
+            knowledge, "who did john call the first bbs with"))
+
+    def test_grossly_confabulated_answer_fails(self):
+        from ceti.brain import _handler_grounded
+        knowledge = ("Mike, his sister's friend, knew the numbers. "
+                     "John called the first BBSs with Mike in the mid-90s.")
+        # Most words invented -> overlap below the floor.
+        # (A subtle invention like "the name 'The New World'" — only
+        # 3 invented words in a 7-word answer — is the fact layer's
+        # job, not this coarse filter's; the fact store catches it.)
+        self.assertFalse(_handler_grounded(
+            "John called the first BBSs with the name 'The New World' "
+            "and they discussed quantum physics and flux capacitors.",
+            knowledge, "who did john call the first bbs with"))
+
+    def test_numbers_still_checked(self):
+        from ceti.brain import _handler_grounded
+        knowledge = "The Commodore 64 was introduced in January 1982."
+        self.assertFalse(_handler_grounded(
+            "The Commodore 64 was introduced in 1977.",
+            knowledge, "when was the commodore 64 introduced"))
+
+    def test_refusal_is_grounded(self):
+        from ceti.brain import _handler_grounded
+        self.assertTrue(_handler_grounded(
+            "The knowledge does not cover that.",
+            "Something unrelated entirely.",
+            "what is the weather"))
