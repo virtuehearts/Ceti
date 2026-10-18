@@ -54,6 +54,14 @@ _TEMPLATES = {
     "named_after": "The {s} was named after {o}.",
     "successor": "The {s} was succeeded by {o}.",
     "predecessor": "The {s} was preceded by {o}.",
+    "capital": "The capital of {s} is {o}.",
+    "currency": "The currency of {s} is {o}.",
+    "currency_code": "The currency code of {s} is {o}.",
+    "population": "The population of {s} is {o}.",
+    "region": "The {s} is in {o}.",
+    "languages": "The languages of {s} are {o}.",
+    "iso_alpha2": "The ISO alpha-2 code of {s} is {o}.",
+    "iso_alpha3": "The ISO alpha-3 code of {s} is {o}.",
 }
 
 # Paraphrase patterns per predicate, with {S} = subject.
@@ -128,6 +136,26 @@ _PATTERNS = {
         "WHAT IS {S}",
         "WHAT IS A {S}",
         "WHAT IS THE {S}",
+    ],
+    "capital": [
+        "WHAT IS THE CAPITAL OF {S}",
+        "CAPITAL OF {S}",
+    ],
+    "currency": [
+        "WHAT IS THE CURRENCY OF {S}",
+        "CURRENCY OF {S}",
+    ],
+    "population": [
+        "WHAT IS THE POPULATION OF {S}",
+        "POPULATION OF {S}",
+    ],
+    "region": [
+        "WHAT REGION IS {S} IN",
+        "WHERE IS {S}",
+    ],
+    "languages": [
+        "WHAT LANGUAGES ARE SPOKEN IN {S}",
+        "LANGUAGES OF {S}",
     ],
     "named_after": [
         "WHAT WAS {S} NAMED AFTER",
@@ -232,9 +260,49 @@ def _subject_from_question(qn: str, predicate: str) -> str:
     m = re.match(r"^HOW\s+MUCH\s+(?:RAM|MEMORY)\s+DOES\s+(?:THE\s+)?(.+?)\s+HAVE\b", qn)
     if m:
         return _clean(m.group(1))
+    # "WHAT IS X'S CAPITAL/CURRENCY/POPULATION/..." (possessive).
+    # Without this, a possessive phrasing extracts NO fact — so a
+    # conflicting fact stated possessively slips past the conflict
+    # gate (module facts included) AND the cross-entity guard
+    # (_cross_entity_mismatch returns False when extraction fails),
+    # letting one entity's fact be served for another. Gated to
+    # attribute predicates: for predicate "is" ("What is France's
+    # history?") the subject is the whole possessive phrase, handled
+    # by the WHAT IS fallback below. Handles both FRANCE'S and
+    # UNITED STATES' (plural possessive, bare apostrophe).
+    if predicate != "is":
+        m = re.match(
+            r"^WHAT\s+IS\s+(?:THE\s+)?(.+?)['’]S?\s+"
+            r"(?:CAPITAL(?:\s+CITY)?|CURRENCY|MONEY|POPULATION|REGION|"
+            r"CONTINENT|LANGUAGES?|LANGUAGE|RAM|MEMORY|CPU|PROCESSOR|"
+            r"PRICE|COST)\b", qn)
+        if m:
+            return _clean(m.group(1))
     # "WHAT IS THE RAM/MEMORY/CPU/PRICE OF X" / "WHAT IS X'S RAM"
     m = re.match(r"^WHAT\s+IS\s+(?:THE\s+)?"
                  r"(?:RAM|MEMORY|CPU|PROCESSOR|PRICE|COST)\s+OF\s+(?:THE\s+)?(.+)$", qn)
+    if m:
+        return _clean(m.group(1))
+    # "WHAT IS THE CAPITAL/CURRENCY/MONEY/POPULATION/REGION/LANGUAGE OF X"
+    m = re.match(r"^WHAT\s+IS\s+(?:THE\s+)?"
+                 r"(?:CAPITAL(?:\s+CITY)?|CURRENCY|MONEY|POPULATION|REGION|CONTINENT|LANGUAGES?|LANGUAGE)\s+OF\s+(?:THE\s+)?(.+)$", qn)
+    if m:
+        return _clean(m.group(1))
+    # "WHAT CURRENCY/MONEY DOES X USE" (the composer's shape for the
+    # same lookup — without this the graph/fact layer misses a
+    # question the intent layer already understands)
+    m = re.match(r"^WHAT\s+(?:CURRENCY|MONEY)\s+DOES\s+(?:THE\s+)?(.+?)\s+USE\b", qn)
+    if m:
+        return _clean(m.group(1))
+    # "WHAT REGION IS X IN" / "WHERE IS X" (region)
+    m = re.match(r"^WHAT\s+REGION\s+IS\s+(?:THE\s+)?(.+?)\s+IN\b", qn)
+    if m:
+        return _clean(m.group(1))
+    m = re.match(r"^WHERE\s+IS\s+(?:THE\s+)?(.+)$", qn)
+    if m:
+        return _clean(m.group(1))
+    # "WHAT LANGUAGES ARE SPOKEN IN X"
+    m = re.match(r"^WHAT\s+LANGUAGES?\s+ARE\s+SPOKEN\s+IN\s+(?:THE\s+)?(.+)$", qn)
     if m:
         return _clean(m.group(1))
     # "WHAT CPU/PROCESSOR DOES X USE/HAVE"
@@ -271,7 +339,17 @@ def _subject_from_question(qn: str, predicate: str) -> str:
     m = re.match(r"^WHAT\s+WAS\s+(?:THE\s+)?(?:SUCCESSOR|PREDECESSOR)\s+OF\s+(?:THE\s+)?(.+)$", qn)
     if m:
         return _clean(m.group(1))
-    # "WHAT IS X" / "WHAT IS A X"
+    # Bare attribute: "CAPITAL OF X?" / "POPULATION OF X" — the short
+    # phrasing with no WHAT IS. Predicate-gated like the possessive
+    # rule: the predicate already comes from the attribute keyword.
+    if predicate != "is":
+        m = re.match(
+            r"^(?:CAPITAL(?:\s+CITY)?|CURRENCY|MONEY|POPULATION|REGION|"
+            r"CONTINENT|LANGUAGES?|LANGUAGE|RAM|MEMORY|CPU|PROCESSOR|"
+            r"PRICE|COST)\s+OF\s+(?:THE\s+)?(.+)$", qn)
+        if m:
+            return _clean(m.group(1))
+    # \"WHAT IS X\" / \"WHAT IS A X\"
     m = re.match(r"^WHAT\s+IS\s+(?:THE\s+|A\s+|AN\s+)?(.+)$", qn)
     if m and predicate == "is":
         return _clean(m.group(1))
@@ -312,6 +390,18 @@ def _predicate_of_question(qn: str) -> str | None:
         return "successor"
     if re.search(r"\b(PRECEDED|PREDECESSOR)\b", qn):
         return "predecessor"
+    if re.search(r"\bCAPITAL\b", qn):
+        return "capital"
+    if re.search(r"\b(CURRENCY|MONEY)\b", qn):
+        return "currency"
+    if re.search(r"\bPOPULATION\b", qn):
+        return "population"
+    if re.search(r"\b(REGION|CONTINENT)\b", qn):
+        return "region"
+    if re.search(r"\bLANGUAGE", qn):
+        return "languages"
+    if re.match(r"^WHERE\s+IS\b", qn):
+        return "region"
     if re.match(r"^WHAT\s+IS\b", qn):
         return "is"
     return None
@@ -396,6 +486,48 @@ def _object_from_answer(predicate: str, answer: str) -> str | None:
                 return _title(obj)
         return None
 
+    if predicate in ("capital", "currency", "currency_code",
+                    "population", "region", "languages",
+                    "iso_alpha2", "iso_alpha3"):
+        # Region has its own answer shape: "<entity> is in <region>."
+        if predicate == "region":
+            m = re.search(r"\bIS\s+IN\s+(?:THE\s+)?(.+)$", au)
+            if m:
+                obj = _WS.sub(" ", m.group(1).strip()).strip(".,;:")
+                obj = re.sub(r"^(?:THE|A|AN)\s+", "", obj, flags=re.I)
+                obj = re.split(r"[,;]|\s+AND\s+", obj, maxsplit=1)[0].strip()
+                if obj and len(obj) <= 80:
+                    return _title(obj)
+        # "The <attr> of <subject> is/are <object>." -> <object>
+        m = re.search(
+            r"\b(?:CAPITAL|CURRENCY|POPULATION|REGION|CONTINENT|"
+            r"LANGUAGES?|LANGUAGE|CODE)\b[^.]*?\b(?:IS|ARE)\s+"
+            r"(?:THE\s+)?(.+)$", au)
+        if m:
+            obj = _WS.sub(" ", m.group(1).strip()).strip(".,;:")
+            obj = re.sub(r"^(?:THE|A|AN)\s+", "", obj, flags=re.I)
+            # Single-entity predicates: cut at the first clause
+            # boundary ("Paris, the currency is the Euro" -> "Paris").
+            # Population keeps its commas (69,081,996); languages keep
+            # theirs (multi-value list).
+            if predicate in ("capital", "currency", "currency_code",
+                             "region", "iso_alpha2", "iso_alpha3"):
+                obj = re.split(r"[,;]|\s+AND\s+", obj, maxsplit=1)[0].strip()
+            if obj and len(obj) <= 80:
+                return _title(obj)
+        # Bare answer: "Paris." / "Euro." — a lone phrase, not a
+        # sentence about something else (rejected when it contains
+        # a verb: "Paris is a beautiful city." is not an object).
+        bare = _WS.sub(" ", an.strip()).strip(".,;:")
+        bare = re.sub(r"^(?:THE|A|AN)\s+", "", bare, flags=re.I)
+        if bare and len(bare) <= 80 \
+                and " IS " not in (" " + bare.upper() + " ") \
+                and " ARE " not in (" " + bare.upper() + " ") \
+                and re.match(r"^[A-Za-z0-9][A-Za-z0-9 ,.'\-/()]*$",
+                             bare):
+            return _title(bare)
+        return None
+
     if predicate == "is":
         # "A BBS is a bulletin board system." — strip a leading article
         m = re.match(r"^(?:A\s+|AN\s+|THE\s+)?(.+?)\s+IS\s+(.+)$", an, flags=re.I)
@@ -441,17 +573,11 @@ def extract_query(question: str) -> tuple[str, str] | None:
     qn = _norm(question)
     pred = _predicate_of_question(qn)
     if pred is None:
-        # Bare "when was X" — the answer's verb decides the predicate.
-        m = re.match(r"^WHEN\s+WAS\s+(?:THE\s+)?(.+)$", qn)
-        if m:
-            subj = _clean(m.group(1))
-            au = answer.upper()
-            for verb, p in (("RELEASED", "released"), ("INTRODUCED", "introduced"),
-                            ("FOUNDED", "founded"), ("CREATED", "created")):
-                if re.search(r"\b" + verb + r"\b", au):
-                    obj = _object_from_answer(p, answer)
-                    if obj:
-                        return Fact(_title(subj), p, obj, 0.0, "", time.time())
+        # Bare "when was X" — without an answer there is no verb to
+        # decide the predicate (introduced? founded? created?), so
+        # there is nothing reliable to look up. Callers fall through
+        # to the other tiers. (This used to reference an undefined
+        # `answer` variable — a NameError on exactly this shape.)
         return None
     subj = _subject_from_question(qn, pred)
     if not subj:

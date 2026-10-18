@@ -491,7 +491,7 @@ _LOCAL_WORDS = {
 
 def _fetch_json(url: str, timeout_s: int = 10) -> object:
     req = urllib.request.Request(url, headers={
-        "User-Agent": "CETI/0.3.1 (sovereign local brain)"})
+        "User-Agent": "CETI/0.3.3 (sovereign local brain)"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
@@ -505,25 +505,34 @@ def _tool_dictionary(word: str) -> str:
     word = (word or "").strip().lower()
     if not word:
         raise ToolError("dictionary needs a word")
+    api_error: Exception | None = None
+    data = None
     try:
         data = _fetch_json(
             "https://api.dictionaryapi.dev/api/v2/entries/en/"
             + urllib.parse.quote(word))
+    except Exception as e:
+        api_error = e  # API miss or unreachable: try the local list
+    if data is not None:
         entry = data[0] if isinstance(data, list) and data else None
-        if not entry:
-            raise ToolError("no definition found for %r" % word)
-        lines = [entry.get("word", word)]
-        for meaning in entry.get("meanings", [])[:2]:
-            pos = meaning.get("partOfSpeech", "")
-            for d in meaning.get("definitions", [])[:2]:
-                lines.append("- %s: %s" % (
-                    pos, d.get("definition", "")))
-        return "\n".join(lines)
-    except Exception:
-        pass  # API miss or unreachable: fall through to local list
+        if entry:
+            lines = [entry.get("word", word)]
+            for meaning in entry.get("meanings", [])[:2]:
+                pos = meaning.get("partOfSpeech", "")
+                for d in meaning.get("definitions", [])[:2]:
+                    lines.append("- %s: %s" % (
+                        pos, d.get("definition", "")))
+            return "\n".join(lines)
     if word in _LOCAL_WORDS:
         definition, _syn = _LOCAL_WORDS[word]
         return "%s\n- %s" % (word, definition)
+    if api_error is not None and "HTTP 404" not in str(api_error):
+        # Reachable-API 404 means "no such word"; anything else
+        # means the fetch itself failed — say that, don't claim
+        # the word has no definition.
+        raise ToolError(
+            "dictionary API unreachable (%s); no definition found "
+            "for %r in local word list" % (api_error, word))
     raise ToolError("no definition found for %r" % word)
 
 
@@ -531,34 +540,43 @@ def _tool_thesaurus(word: str) -> str:
     word = (word or "").strip().lower()
     if not word:
         raise ToolError("thesaurus needs a word")
+    api_error: Exception | None = None
+    data = None
     try:
         data = _fetch_json(
             "https://api.dictionaryapi.dev/api/v2/entries/en/"
             + urllib.parse.quote(word))
+    except Exception as e:
+        api_error = e  # API miss or unreachable: try the local list
+    if data is not None:
         entry = data[0] if isinstance(data, list) and data else None
-        if not entry:
-            raise ToolError("no entry found for %r" % word)
-        synonyms: list[str] = []
-        antonyms: list[str] = []
-        for meaning in entry.get("meanings", []):
-            for d in meaning.get("definitions", []):
-                synonyms += d.get("synonyms", []) or []
-                antonyms += d.get("antonyms", []) or []
-        if not synonyms and not antonyms:
-            return "%s: no synonyms or antonyms listed" % word
-        out = [word]
-        if synonyms:
-            out.append("synonyms: " + ", ".join(sorted(set(synonyms))[:10]))
-        if antonyms:
-            out.append("antonyms: " + ", ".join(sorted(set(antonyms))[:10]))
-        return "\n".join(out)
-    except Exception:
-        pass  # API miss or unreachable: fall through to local list
+        if entry:
+            synonyms: list[str] = []
+            antonyms: list[str] = []
+            for meaning in entry.get("meanings", []):
+                for d in meaning.get("definitions", []):
+                    synonyms += d.get("synonyms", []) or []
+                    antonyms += d.get("antonyms", []) or []
+            if not synonyms and not antonyms:
+                return "%s: no synonyms or antonyms listed" % word
+            out = [word]
+            if synonyms:
+                out.append("synonyms: " + ", ".join(sorted(set(synonyms))[:10]))
+            if antonyms:
+                out.append("antonyms: " + ", ".join(sorted(set(antonyms))[:10]))
+            return "\n".join(out)
     if word in _LOCAL_WORDS:
         _definition, syns = _LOCAL_WORDS[word]
         if syns:
             return "%s\nsynonyms: %s" % (word, ", ".join(syns))
         return "%s: no synonyms listed" % word
+    if api_error is not None and "HTTP 404" not in str(api_error):
+        # Reachable-API 404 means "no such word"; anything else
+        # means the fetch itself failed — say that, don't claim
+        # the word has no entry.
+        raise ToolError(
+            "thesaurus API unreachable (%s); no entry found "
+            "for %r in local word list" % (api_error, word))
     raise ToolError("no entry found for %r" % word)
 
 
@@ -658,3 +676,45 @@ _register(Tool(
                    "description": "city or place name"}},
         ["place"]),
     side_effects="read", sandboxed=False, func=_tool_weather))
+
+
+# ---- TTS: speak through the PocketTTS bridge --------------------
+# The bridge is the sovereign voice layer (self-hosted, local-only,
+# OpenAI-compatible /v1/audio/speech). Default voice mya-03.
+# Audio lands in the work root (tts/). Fail LOUD: a down bridge,
+# an unknown voice, or empty audio comes back as success=False —
+# never faked, never silence-as-speech.
+
+def _tool_tts(text: str, voice: str | None = None,
+              filename: str | None = None) -> str:
+    from . import tts as _tts
+    if not isinstance(text, str) or not text.strip():
+        raise ToolError("tts needs non-empty text")
+    try:
+        res = _tts.synthesize_to_file(
+            text, voice=(voice or None),
+            out_dir=os.path.join(work_root(), "tts"),
+            filename=(filename or None))
+    except _tts.TTSError as e:
+        raise ToolError("TTS FAILED: %s" % e)
+    return _tts.describe(res)
+
+
+_register(Tool(
+    name="tts",
+    description="Speak text through the local PocketTTS bridge and "
+                "save the WAV to the work root (tts/). Default voice "
+                "mya-03. Fails loudly when the bridge is down, the "
+                "voice is unknown, or the bridge returns no audio — "
+                "never fakes audio, never returns silence as speech.",
+    parameters=_schema(
+        {"text": {"type": "string",
+                   "description": "the text to speak aloud"},
+         "voice": {"type": "string",
+                   "description": "bridge voice (default mya-03)",
+                   "default": "mya-03"},
+         "filename": {"type": "string",
+                      "description": "plain .wav file name to save as "
+                                     "(default: timestamped)"}},
+        ["text"]),
+    side_effects="write", sandboxed=False, func=_tool_tts))

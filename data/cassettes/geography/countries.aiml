@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PARTIAL coverage: 30 countries. restcountries.com v3.1 returned a deprecation
+     error on 2026-10-17 (v5 requires an account/API key), so every value below was
+     verified individually via web search (Wikipedia country infoboxes, ISO 3166-1
+     alpha-3 list, Statvoo, country.io). Population figures are the estimate/census
+     values shown in those sources at fetch time; see the task report for per-value
+     provenance. Capital "Brasilia" is spelled without the accent to match the
+     CETI spot-check convention. South Africa lists Pretoria (executive capital). -->
+<module domain="geography" name="countries" version="1-partial" source="Wikipedia country infoboxes + ISO 3166-1 alpha-3 list + Statvoo/country.io, verified via web search 2026-10-17; PARTIAL coverage: 30 countries (restcountries.com v3.1 deprecated, v5 requires API key)" confidence="1.0">
+  <fact subject="Argentina" predicate="capital" object="Buenos Aires"/>
+  <fact subject="Argentina" predicate="currency" object="Argentine peso"/>
+  <fact subject="Argentina" predicate="currency_code" object="ARS"/>
+  <fact subject="Argentina" predicate="region" object="Americas"/>
+  <fact subject="Argentina" predicate="population" object="46735004"/>
+  <fact subject="Argentina" predicate="languages" object="Spanish"/>
+  <fact subject="Argentina" predicate="iso_alpha2" object="AR"/>
+  <fact subject="Argentina" predicate="iso_alpha3" object="ARG"/>
+  <fact subject="Australia" predicate="capital" object="Canberra"/>
+  <fact subject="Australia" predicate="currency" object="Australian dollar"/>
+  <fact subject="Australia" predicate="currency_code" object="AUD"/>
+  <fact subject="Australia" predicate="region" object="Oceania"/>
+  <fact subject="Australia" predicate="population" object="27801023"/>
+  <fact subject="Australia" predicate="languages" object="English"/>
+  <fact subject="Australia" predicate="iso_alpha2" object="AU"/>
+  <fact subject="Australia" predicate="iso_alpha3" object="AUS"/>
+  <fact subject="Brazil" predicate="capital" object="Brasilia"/>
+  <fact subject="Brazil" predicate="currency" object="Brazilian real"/>
+  <fact subject="Brazil" predicate="currency_code" object="BRL"/>
+  <fact subject="Brazil" predicate="region" object="Americas"/>
+  <fact subject="Brazil" predicate="population" object="217240060"/>
+  <fact subject="Brazil" predicate="languages" object="Portuguese"/>
+  <fact subject="Brazil" predicate="iso_alpha2" object="BR"/>
+  <fact subject="Brazil" predicate="iso_alpha3" object="BRA"/>
+  <fact subject="Canada" predicate="capital" object="Ottawa"/>
+  <fact subject="Canada" predicate="currency" object="Canadian dollar"/>
+  <fact subject="Canada" predicate="currency_code" object="CAD"/>
+  <fact subject="Canada" predicate="region" object="Americas"/>
+  <fact subject="Canada" predicate="population" object="41417056"/>
+  <fact subject="Canada" predicate="languages" object="English, French"/>
+  <fact subject="Canada" predicate="iso_alpha2" object="CA"/>
+  <fact subject="Canada" predicate="iso_alpha3" object="CAN"/>
+  <fact subject="Chile" predicate="capital" object="Santiago"/>
+  <fact subject="Chile" predicate="currency" object="Chilean peso"/>
+  <fact subject="Chile" predicate="currency_code" object="CLP"/>
+  <fact subject="Chile" predicate="region" object="Americas"/>
+  <fact subject="Chile" predicate="population" object="19629590"/>
+  <fact subject="Chile" predicate="languages" object="Spanish"/>
+  <fact subject="Chile" predicate="iso_alpha2" object="CL"/>
+  <fact subject="Chile" predicate="iso_alpha3" object="CHL"/>
+  <fact subject="China" predicate="capital" object="Beijing"/>
+  <fact subject="China" predicate="currency" object="Renminbi"/>
+  <fact subject="China" predicate="currency_code" object="CNY"/>
+  <fact subject="China" predicate="region" object="Asia"/>
+  <fact subject="China" predicate="population" object="1404890000"/>
+  <fact subject="China" predicate="languages" object="Standard Chinese"/>
+  <fact subject="China" predicate="iso_alpha2" object="CN"/>
+  <fact subject="China" predicate="iso_alpha3" object="CHN"/>
+  <fact subject="Egypt" predicate="capital" object="Cairo"/>
+  <fact subject="Egypt" predicate="currency" object="Egyptian pound"/>
+  <fact subject="Egypt" predicate="currency_code" object="EGP"/>
+  <fact subject="Egypt" predicate="region" object="Africa"/>
+  <fact subject="Egypt" predicate="population" object="107868296"/>
+  <fact subject="Egypt" predicate="languages" object="Arabic"/>
+  <fact subject="Egypt" predicate="iso_alpha2" object="EG"/>
+  <fact subject="Egypt" predicate="iso_alpha3" object="EGY"/>
+  <fact subject="France" predicate="capital" object="Paris"/>
+  <fact subject="France" predicate="currency" object="Euro"/>
+  <fact subject="France" predicate="currency_code" object="EUR"/>
+  <fact subject="France" predicate="region" object="Europe"/>
+  <fact subject="France" predicate="population" object="69081996"/>
+  <fact subject="France" predicate="languages" object="French"/>
+  <fact subject="France" predicate="iso_alpha2" object="FR"/>
+  <fact subject="France" predicate="iso_alpha3" object="FRA"/>
+  <fact subject="Germany" predicate="capital" object="Berlin"/>
+  <fact subject="Germany" predicate="currency" object="Euro"/>
+  <fact subject="Germany" predicate="currency_code" object="EUR"/>
+  <fact subject="Germany" predicate="region" object="Europe"/>
+  <fact subject="Germany" predicate="population" object="83497147"/>
+  <fact subject="Germany" predicate="languages" object="German"/>
+  <fact subject="Germany" predicate="iso_alpha2" object="DE"/>
+  <fact subject="Germany" predicate="iso_alpha3" object="DEU"/>
+  <fact subject="India" predicate="capital" object="New Delhi"/>
+  <fact subject="India" predicate="currency" object="Indian rupee"/>
+  <fact subject="India" predicate="currency_code" object="INR"/>
+  <fact subject="India" predicate="region" object="Asia"/>
+  <fact subject="India" predicate="population" object="1425900000"/>
+  <fact subject="India" predicate="languages" object="Hindi, English"/>
+  <fact subject="India" predicate="iso_alpha2" object="IN"/>
+  <fact subject="India" predicate="iso_alpha3" object="IND"/>
+  <fact subject="Indonesia" predicate="capital" object="Jakarta"/>
+  <fact subject="Indonesia" predicate="currency" object="Indonesian rupiah"/>
+  <fact subject="Indonesia" predicate="currency_code" object="IDR"/>
+  <fact subject="Indonesia" predicate="region" object="Asia"/>
+  <fact subject="Indonesia" predicate="population" object="288315089"/>
+  <fact subject="Indonesia" predicate="languages" object="Indonesian"/>
+  <fact subject="Indonesia" predicate="iso_alpha2" object="ID"/>
+  <fact subject="Indonesia" predicate="iso_alpha3" object="IDN"/>
+  <fact subject="Italy" predicate="capital" object="Rome"/>
+  <fact subject="Italy" predicate="currency" object="Euro"/>
+  <fact subject="Italy" predicate="currency_code" object="EUR"/>
+  <fact subject="Italy" predicate="region" object="Europe"/>
+  <fact subject="Italy" predicate="population" object="58934336"/>
+  <fact subject="Italy" predicate="languages" object="Italian"/>
+  <fact subject="Italy" predicate="iso_alpha2" object="IT"/>
+  <fact subject="Italy" predicate="iso_alpha3" object="ITA"/>
+  <fact subject="Japan" predicate="capital" object="Tokyo"/>
+  <fact subject="Japan" predicate="currency" object="Japanese yen"/>
+  <fact subject="Japan" predicate="currency_code" object="JPY"/>
+  <fact subject="Japan" predicate="region" object="Asia"/>
+  <fact subject="Japan" predicate="population" object="122950000"/>
+  <fact subject="Japan" predicate="languages" object="Japanese"/>
+  <fact subject="Japan" predicate="iso_alpha2" object="JP"/>
+  <fact subject="Japan" predicate="iso_alpha3" object="JPN"/>
+  <fact subject="Kenya" predicate="capital" object="Nairobi"/>
+  <fact subject="Kenya" predicate="currency" object="Kenyan shilling"/>
+  <fact subject="Kenya" predicate="currency_code" object="KES"/>
+  <fact subject="Kenya" predicate="region" object="Africa"/>
+  <fact subject="Kenya" predicate="population" object="56432944"/>
+  <fact subject="Kenya" predicate="languages" object="English, Swahili"/>
+  <fact subject="Kenya" predicate="iso_alpha2" object="KE"/>
+  <fact subject="Kenya" predicate="iso_alpha3" object="KEN"/>
+  <fact subject="Mexico" predicate="capital" object="Mexico City"/>
+  <fact subject="Mexico" predicate="currency" object="Mexican peso"/>
+  <fact subject="Mexico" predicate="currency_code" object="MXN"/>
+  <fact subject="Mexico" predicate="region" object="Americas"/>
+  <fact subject="Mexico" predicate="population" object="134407258"/>
+  <fact subject="Mexico" predicate="languages" object="Spanish"/>
+  <fact subject="Mexico" predicate="iso_alpha2" object="MX"/>
+  <fact subject="Mexico" predicate="iso_alpha3" object="MEX"/>
+  <fact subject="Netherlands" predicate="capital" object="Amsterdam"/>
+  <fact subject="Netherlands" predicate="currency" object="Euro"/>
+  <fact subject="Netherlands" predicate="currency_code" object="EUR"/>
+  <fact subject="Netherlands" predicate="region" object="Europe"/>
+  <fact subject="Netherlands" predicate="population" object="17993485"/>
+  <fact subject="Netherlands" predicate="languages" object="Dutch, Frisian"/>
+  <fact subject="Netherlands" predicate="iso_alpha2" object="NL"/>
+  <fact subject="Netherlands" predicate="iso_alpha3" object="NLD"/>
+  <fact subject="New Zealand" predicate="capital" object="Wellington"/>
+  <fact subject="New Zealand" predicate="currency" object="New Zealand dollar"/>
+  <fact subject="New Zealand" predicate="currency_code" object="NZD"/>
+  <fact subject="New Zealand" predicate="region" object="Oceania"/>
+  <fact subject="New Zealand" predicate="population" object="5337970"/>
+  <fact subject="New Zealand" predicate="languages" object="English, Māori, New Zealand Sign Language"/>
+  <fact subject="New Zealand" predicate="iso_alpha2" object="NZ"/>
+  <fact subject="New Zealand" predicate="iso_alpha3" object="NZL"/>
+  <fact subject="Nigeria" predicate="capital" object="Abuja"/>
+  <fact subject="Nigeria" predicate="currency" object="Nigerian naira"/>
+  <fact subject="Nigeria" predicate="currency_code" object="NGN"/>
+  <fact subject="Nigeria" predicate="region" object="Africa"/>
+  <fact subject="Nigeria" predicate="population" object="242747130"/>
+  <fact subject="Nigeria" predicate="languages" object="English"/>
+  <fact subject="Nigeria" predicate="iso_alpha2" object="NG"/>
+  <fact subject="Nigeria" predicate="iso_alpha3" object="NGA"/>
+  <fact subject="Poland" predicate="capital" object="Warsaw"/>
+  <fact subject="Poland" predicate="currency" object="Polish zloty"/>
+  <fact subject="Poland" predicate="currency_code" object="PLN"/>
+  <fact subject="Poland" predicate="region" object="Europe"/>
+  <fact subject="Poland" predicate="population" object="37314000"/>
+  <fact subject="Poland" predicate="languages" object="Polish"/>
+  <fact subject="Poland" predicate="iso_alpha2" object="PL"/>
+  <fact subject="Poland" predicate="iso_alpha3" object="POL"/>
+  <fact subject="Russia" predicate="capital" object="Moscow"/>
+  <fact subject="Russia" predicate="currency" object="Russian ruble"/>
+  <fact subject="Russia" predicate="currency_code" object="RUB"/>
+  <fact subject="Russia" predicate="region" object="Europe"/>
+  <fact subject="Russia" predicate="population" object="146028325"/>
+  <fact subject="Russia" predicate="languages" object="Russian"/>
+  <fact subject="Russia" predicate="iso_alpha2" object="RU"/>
+  <fact subject="Russia" predicate="iso_alpha3" object="RUS"/>
+  <fact subject="Saudi Arabia" predicate="capital" object="Riyadh"/>
+  <fact subject="Saudi Arabia" predicate="currency" object="Saudi riyal"/>
+  <fact subject="Saudi Arabia" predicate="currency_code" object="SAR"/>
+  <fact subject="Saudi Arabia" predicate="region" object="Asia"/>
+  <fact subject="Saudi Arabia" predicate="population" object="33702731"/>
+  <fact subject="Saudi Arabia" predicate="languages" object="Arabic"/>
+  <fact subject="Saudi Arabia" predicate="iso_alpha2" object="SA"/>
+  <fact subject="Saudi Arabia" predicate="iso_alpha3" object="SAU"/>
+  <fact subject="South Africa" predicate="capital" object="Pretoria"/>
+  <fact subject="South Africa" predicate="currency" object="South African rand"/>
+  <fact subject="South Africa" predicate="currency_code" object="ZAR"/>
+  <fact subject="South Africa" predicate="region" object="Africa"/>
+  <fact subject="South Africa" predicate="population" object="59622350"/>
+  <fact subject="South Africa" predicate="languages" object="Afrikaans, English, Ndebele, Sepedi, Sesotho, Setswana, South African Sign Language, Swazi, Tshivenda, Xhosa, Xitsonga, Zulu"/>
+  <fact subject="South Africa" predicate="iso_alpha2" object="ZA"/>
+  <fact subject="South Africa" predicate="iso_alpha3" object="ZAF"/>
+  <fact subject="South Korea" predicate="capital" object="Seoul"/>
+  <fact subject="South Korea" predicate="currency" object="South Korean won"/>
+  <fact subject="South Korea" predicate="currency_code" object="KRW"/>
+  <fact subject="South Korea" predicate="region" object="Asia"/>
+  <fact subject="South Korea" predicate="population" object="51106229"/>
+  <fact subject="South Korea" predicate="languages" object="Korean"/>
+  <fact subject="South Korea" predicate="iso_alpha2" object="KR"/>
+  <fact subject="South Korea" predicate="iso_alpha3" object="KOR"/>
+  <fact subject="Spain" predicate="capital" object="Madrid"/>
+  <fact subject="Spain" predicate="currency" object="Euro"/>
+  <fact subject="Spain" predicate="currency_code" object="EUR"/>
+  <fact subject="Spain" predicate="region" object="Europe"/>
+  <fact subject="Spain" predicate="population" object="49801559"/>
+  <fact subject="Spain" predicate="languages" object="Spanish"/>
+  <fact subject="Spain" predicate="iso_alpha2" object="ES"/>
+  <fact subject="Spain" predicate="iso_alpha3" object="ESP"/>
+  <fact subject="Sweden" predicate="capital" object="Stockholm"/>
+  <fact subject="Sweden" predicate="currency" object="Swedish krona"/>
+  <fact subject="Sweden" predicate="currency_code" object="SEK"/>
+  <fact subject="Sweden" predicate="region" object="Europe"/>
+  <fact subject="Sweden" predicate="population" object="10613531"/>
+  <fact subject="Sweden" predicate="languages" object="Swedish"/>
+  <fact subject="Sweden" predicate="iso_alpha2" object="SE"/>
+  <fact subject="Sweden" predicate="iso_alpha3" object="SWE"/>
+  <fact subject="Thailand" predicate="capital" object="Bangkok"/>
+  <fact subject="Thailand" predicate="currency" object="Thai baht"/>
+  <fact subject="Thailand" predicate="currency_code" object="THB"/>
+  <fact subject="Thailand" predicate="region" object="Asia"/>
+  <fact subject="Thailand" predicate="population" object="65975198"/>
+  <fact subject="Thailand" predicate="languages" object="Thai"/>
+  <fact subject="Thailand" predicate="iso_alpha2" object="TH"/>
+  <fact subject="Thailand" predicate="iso_alpha3" object="THA"/>
+  <fact subject="Turkey" predicate="capital" object="Ankara"/>
+  <fact subject="Turkey" predicate="currency" object="Turkish lira"/>
+  <fact subject="Turkey" predicate="currency_code" object="TRY"/>
+  <fact subject="Turkey" predicate="region" object="Asia"/>
+  <fact subject="Turkey" predicate="population" object="86092168"/>
+  <fact subject="Turkey" predicate="languages" object="Turkish"/>
+  <fact subject="Turkey" predicate="iso_alpha2" object="TR"/>
+  <fact subject="Turkey" predicate="iso_alpha3" object="TUR"/>
+  <fact subject="United Kingdom" predicate="capital" object="London"/>
+  <fact subject="United Kingdom" predicate="currency" object="Pound sterling"/>
+  <fact subject="United Kingdom" predicate="currency_code" object="GBP"/>
+  <fact subject="United Kingdom" predicate="region" object="Europe"/>
+  <fact subject="United Kingdom" predicate="population" object="69483939"/>
+  <fact subject="United Kingdom" predicate="languages" object="English"/>
+  <fact subject="United Kingdom" predicate="iso_alpha2" object="GB"/>
+  <fact subject="United Kingdom" predicate="iso_alpha3" object="GBR"/>
+  <fact subject="United States" predicate="capital" object="Washington, D.C."/>
+  <fact subject="United States" predicate="currency" object="U.S. dollar"/>
+  <fact subject="United States" predicate="currency_code" object="USD"/>
+  <fact subject="United States" predicate="region" object="Americas"/>
+  <fact subject="United States" predicate="population" object="341784857"/>
+  <fact subject="United States" predicate="languages" object="English"/>
+  <fact subject="United States" predicate="iso_alpha2" object="US"/>
+  <fact subject="United States" predicate="iso_alpha3" object="USA"/>
+  <fact subject="Vietnam" predicate="capital" object="Hanoi"/>
+  <fact subject="Vietnam" predicate="currency" object="Vietnamese dong"/>
+  <fact subject="Vietnam" predicate="currency_code" object="VND"/>
+  <fact subject="Vietnam" predicate="region" object="Asia"/>
+  <fact subject="Vietnam" predicate="population" object="99497680"/>
+  <fact subject="Vietnam" predicate="languages" object="Vietnamese"/>
+  <fact subject="Vietnam" predicate="iso_alpha2" object="VN"/>
+  <fact subject="Vietnam" predicate="iso_alpha3" object="VNM"/>
+</module>

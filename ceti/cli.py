@@ -4,7 +4,7 @@
 
 Commands: /stats  /trace  /tiers  /heartbeat  /tasks  /agent
           /identity  /benchmark  /tools  /task  /skills  /ingest
-          /story  /quit
+          /story  /quit  /tts
 
 On start the BIOS POST runs (brain.boot): every subsystem is loaded
 and verified before the prompt appears. If you go quiet for
@@ -62,6 +62,80 @@ def heartbeat_tick(hb: dict, cycle_fn=_real_cycle) -> None:
     threading.Thread(target=work, daemon=True).start()
 
 
+def handle_tts_command(arg: str) -> None:
+    """REPL /tts: speak text via the PocketTTS bridge (tool `tts`).
+
+    Prints the saved path + byte count + duration on success, or a
+    loud TTS FAILED line — never silence passed off as speech.
+    """
+    from . import tts as _tts
+    from . import tools as _tools
+    try:
+        text, voice = _tts.parse_command(arg)
+    except _tts.TTSError as e:
+        print(f"TTS FAILED: {e}")
+        return
+    try:
+        print(_tools.call("tts", text=text, voice=voice))
+    except Exception as e:
+        print(f"TTS FAILED: {e}")
+
+
+# ---- /web: the ChatGPT-like web UI ---------------------------------------
+# Runs in a daemon thread with its OWN Brain — never the REPL's
+# (sqlite handles are thread-affine). State lives here so
+# "/web stop" with no server running is a message, not a crash.
+_web_state: dict = {"server": None, "thread": None,
+                    "host": None, "port": None}
+
+
+def handle_web_command(arg: str) -> None:
+    """/web        start the web UI (daemon thread, own Brain)
+    /web stop   stop it again."""
+    from . import web as _web
+    arg = (arg or "").strip().lower()
+    if arg == "stop":
+        srv = _web_state["server"]
+        if srv is None:
+            print("web UI is not running.")
+            return
+        try:
+            srv.shutdown()
+        except Exception as e:
+            print(f"web UI stop hit an error: {e}")
+        th = _web_state["thread"]
+        if th is not None:
+            th.join(timeout=10)
+        _web_state.update(server=None, thread=None,
+                           host=None, port=None)
+        print("web UI stopped.")
+        return
+    if arg:
+        print("usage: /web | /web stop")
+        return
+    if _web_state["server"] is not None:
+        print(f"web UI already running at "
+              f"http://{_web_state['host']}:{_web_state['port']}")
+        return
+    host, port = _web.DEFAULT_HOST, _web.DEFAULT_PORT
+    try:
+        server = _web.make_server(host, port)
+    except OSError as e:
+        print(f"web UI failed to bind {host}:{port}: {e}")
+        return
+    except Exception as e:
+        print(f"web UI failed to start: {type(e).__name__}: {e}")
+        return
+    import threading as _threading
+    th = _threading.Thread(target=server.serve_forever,
+                           daemon=True, name="ceti-web")
+    th.start()
+    _web_state.update(server=server, thread=th, host=host, port=port)
+    print(f"CETI web UI: http://{host}:{port}")
+    print("(runs in a background thread with its own brain; "
+          "the REPL stays live. /web stop to shut it down.)")
+
+
 def main() -> int:
     from . import colour as _colour
     from . import help as _help
@@ -97,7 +171,7 @@ def main() -> int:
     hb = {"running": False, "result": None, "enabled": True}
     show_trace = False
     print(_help.HELP_TEXT)
-    print("brain 0.3.1 — %s at the prompt. type a question."
+    print("brain 0.3.3 — %s at the prompt. type a question."
           % agent.name)
     try:
         while True:
@@ -148,6 +222,12 @@ def main() -> int:
                     print("usage: /call <tool> [key=value ...]")
                 except Exception as e:
                     print(f"tool error: {e}")
+                continue
+            if line == "/tts" or line.startswith("/tts "):
+                handle_tts_command(line[4:].strip())
+                continue
+            if line == "/web" or line.startswith("/web "):
+                handle_web_command(line[4:].strip())
                 continue
             if line.startswith("/task "):
                 task = line[6:].strip()

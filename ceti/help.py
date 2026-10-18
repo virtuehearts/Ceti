@@ -30,6 +30,11 @@ CETI commands — ask anything, or use a slash command:
   /tools             tool registry (all sandboxed)
   /call <tool> k=v   run one tool (\\n in values becomes a newline)
   /task <what>       cloud oracle drives tools for a job
+  /tts [--voice NAME] <text>
+                     speak text via the PocketTTS bridge
+                     (default voice mya-03; WAV saved to work root/tts/)
+  /web               start the ChatGPT-like web UI (background thread)
+  /web stop          stop the web UI
   /skills            skill bundles (SKILL.md); /skills reload
   /ingest            drop files in data/library/, then ingest them
   /story ...         /story new|write|status|compile|list|article

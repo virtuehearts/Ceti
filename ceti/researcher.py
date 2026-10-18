@@ -481,21 +481,28 @@ class Researcher:
                 do = False
             if not do:
                 continue
-            # --- fact-layer gate (fail-closed: no fact store -> pass) ---
-            facts = getattr(self.brain, "_facts", None)
-            if facts is not None:
+            # --- fact-layer gate (single gate: graph over modules +
+            # learned facts, then persist). Fail-closed: no gate ->
+            # pass. A blocked pair is dropped, never written.
+            learn_fact = getattr(self.brain, "learn_fact", None)
+            if learn_fact is not None:
                 try:
-                    result = facts.learn(q, a, confidence=0.9,
-                                         source="research")
+                    result = learn_fact(q, a, 0.9, "research")
                     if result["status"] == "blocked":
-                        ex = result["existing"]
-                        print(f"[research] fact-blocked {q!r}: "
-                              f"fact store already has {ex.subject} "
-                              f"{ex.predicate} = {ex.object}", flush=True)
+                        ex = result.get("existing")
+                        if ex is not None:
+                            print(f"[research] fact-blocked {q!r}: "
+                                  f"fact store already has {ex.subject} "
+                                  f"{ex.predicate} = {ex.object}",
+                                  flush=True)
+                        else:
+                            print(f"[research] fact-blocked {q!r}: "
+                                  f"conflicts with existing knowledge",
+                                  flush=True)
                         blocked += 1
                         continue
                     if result["status"] in ("learned", "superseded") \
-                            and result["fact"] is not None \
+                            and result.get("fact") is not None \
                             and self.brain.aiml is not None:
                         for pat in result["fact"].patterns():
                             self.brain.aiml.learn_compiled(

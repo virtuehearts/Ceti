@@ -76,11 +76,12 @@ OPCODES = (OP_READ, OP_COMPILE, OP_WRITE, OP_PREFETCH, OP_INVALIDATE)
 # Store names, in bus (cache) order.
 STORE_CALC = "calc"
 STORE_AIML = "aiml"
+STORE_GRAPH = "graph"
 STORE_MEMORY = "memory"
 STORE_LIBRARY = "library"
 STORE_ORACLE = "oracle"
-STORES = (STORE_CALC, STORE_AIML, STORE_MEMORY, STORE_LIBRARY,
-          STORE_ORACLE)
+STORES = (STORE_CALC, STORE_AIML, STORE_GRAPH, STORE_MEMORY,
+          STORE_LIBRARY, STORE_ORACLE)
 
 
 def _norm(text: str) -> str:
@@ -96,7 +97,7 @@ def _dedupe_key(text: str) -> str:
 class Frame:
     """One answer from one store, in the bus's common shape."""
     text: str
-    store: str                       # calc | aiml | memory | library | oracle
+    store: str                       # calc | aiml | graph | memory | library | oracle
     question: str = ""               # the sub-question this answers
     confidence: float = 1.0          # 0..1, store-native score
     cost: int = 0                    # 0 = local, 1 = oracle (slow/paid)
@@ -238,6 +239,7 @@ class MemoryBus:
 
     A store is anything with the method the bus calls:
       aiml:   .respond(query) -> str | None
+      graph:  brain._graph.answer(query) / brain._facts.answer(query)
       memory: .search(query, top_k=n) -> [(q, a, score, sim)]
       library:.search(query, top_k=n) -> [{text, score, filename, ...}]
     Calc is tried via ceti.calc when available; a missing calc
@@ -282,6 +284,13 @@ class MemoryBus:
         except Exception:
             out["stores"]["library_chunks"] = 0
         try:
+            graph = getattr(self.brain, "_graph", None) \
+                if self.brain is not None else None
+            out["stores"]["graph"] = (
+                len(graph.all_active()) if graph is not None else 0)
+        except Exception:
+            out["stores"]["graph"] = 0
+        try:
             from .cassettes import CassetteRack
             import os
             if self.cfg is not None:
@@ -318,6 +327,30 @@ class MemoryBus:
         if not text:
             return None
         return Frame(text=text, store=STORE_AIML, question=query,
+                     confidence=1.0, cost=0)
+
+    def _read_graph(self, query: str) -> Frame | None:
+        # Structured facts (module + learned) — the temporal lobe.
+        # Without this, the bus reported module facts as gaps and
+        # sent them to the oracle even though the brain knew them
+        # locally (e.g. "What is the capital of France?" -> Paris).
+        # Same fallback as Brain._tier_memory: graph first, fact
+        # store when the graph failed to build. Pure local lookup,
+        # no model. Fail-soft like every other reader.
+        if self.brain is None:
+            return None
+        try:
+            graph = getattr(self.brain, "_graph", None)
+            if graph is not None:
+                text = graph.answer(query)
+            else:
+                facts = getattr(self.brain, "_facts", None)
+                text = facts.answer(query) if facts is not None else None
+        except Exception:
+            return None
+        if not text:
+            return None
+        return Frame(text=text, store=STORE_GRAPH, question=query,
                      confidence=1.0, cost=0)
 
     def _read_memory(self, query: str, top_k: int = 3) -> list[Frame]:
@@ -386,6 +419,10 @@ class MemoryBus:
         if aiml is not None:
             aiml.latency_ms = int((time.monotonic() - t0) * 1000)
             frames.append(aiml)
+        graph = self._read_graph(query)
+        if graph is not None:
+            graph.latency_ms = int((time.monotonic() - t0) * 1000)
+            frames.append(graph)
         frames.extend(self._read_memory(query, top_k=top_k_per_store))
         frames.extend(self._read_library(query, top_k=top_k_per_store))
         # Dedupe identical text across stores: keep the first
@@ -403,7 +440,8 @@ class MemoryBus:
         if not deduped:
             gaps.append(Gap(question=query, intent=intent, reason="miss",
                             stores_checked=[STORE_CALC, STORE_AIML,
-                                            STORE_MEMORY, STORE_LIBRARY]))
+                                            STORE_GRAPH, STORE_MEMORY,
+                                            STORE_LIBRARY]))
             if self.gap_log is not None:
                 try:
                     self.gap_log.note_gap(query)

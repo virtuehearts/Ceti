@@ -27,7 +27,7 @@ from .backends import (BackendError, ChatBackend, NvidiaBackend,
                        OllamaBackend, OpenRouterBackend)
 from .cassettes import CassetteRack
 from .classify import RelevanceClassifier
-from .facts import FactStore
+from .facts import Fact, FactStore, extract_query
 from .config import BrainConfig
 from .memory import MemoryIndex
 from .retry import retry
@@ -120,6 +120,36 @@ def _handler_grounded(answer: str, knowledge: str, question: str) -> bool:
             and _words_grounded(answer, knowledge, question))
 
 
+def _cross_entity_mismatch(query: str, stored_question: str) -> bool:
+    """True when a fuzzy knowledge hit answers a DIFFERENT entity.
+
+    A fact-shaped question ("What is the capital of Zzxq?") shares
+    most of its words with a stored pair about another entity
+    ("What is the capital of Testland?"), so word-overlap search
+    scores it above the floor — and the memory tier would serve
+    Testland's capital as Zzxq's. Same predicate + different
+    subject = cross-entity mismatch: reject the hit so the
+    question fails loud instead of answering with the wrong
+    entity's fact. Non-fact questions (no extractable pair) and
+    same-entity hits pass through untouched.
+    """
+    try:
+        q = extract_query(query)
+        s = extract_query(stored_question)
+    except Exception:
+        return False
+    if q is None or s is None:
+        return False
+    if q[1] == "is" or s[1] == "is":
+        # "is" is the generic fallback predicate ("What is X?") —
+        # its subject is the whole rest of the question, so two
+        # paraphrases of the same ask ("airspeed velocity of…" vs
+        # "airspeed of…") would look like different subjects.
+        # The guard only covers real attribute predicates.
+        return False
+    return q[1] == s[1] and q[0].lower() != s[0].lower()
+
+
 @dataclass
 class Answer:
     text: str
@@ -192,6 +222,41 @@ class Brain:
                     self.aiml.learn_compiled(pat, tpl)
         except Exception:
             self._facts = None
+
+        # Knowledge graph (temporal lobe): derived index over the
+        # CETI Modules + learned facts. Files are the source of
+        # truth; the graph is rebuilt from them at boot. Fail-closed:
+        # if it can't build, the memory tier falls back to _facts.
+        self._graph = None
+        self._modules: list = []
+        try:
+            from .graph import KnowledgeGraph
+            from .modules import load_modules
+            self._graph = KnowledgeGraph()
+            cassette_root = os.path.join(
+                os.path.abspath(self.cfg.data_dir),
+                self.cfg.cassette_dir)
+            self._modules = load_modules(cassette_root)
+            self._graph.build_from_modules(self._modules)
+            if self._facts is not None:
+                for f in self._facts.all_active():
+                    self._graph.add_fact(f.subject, f.predicate,
+                                         f.object, f.confidence,
+                                         f.source)
+            # Register narrative patterns from domain-subdir modules
+            # (flat legacy cassettes are already loaded via the rack).
+            if self.aiml is not None:
+                for m in self._modules:
+                    rel = os.path.relpath(m.path, cassette_root)
+                    if os.sep in rel:
+                        for pat, tpl in m.patterns:
+                            try:
+                                self.aiml.learn_compiled(pat, tpl)
+                            except Exception:
+                                pass
+        except Exception:
+            self._graph = None
+            self._modules = []
 
         self.memory = None
         self.memory_kind = "none"
@@ -488,7 +553,45 @@ class Brain:
         """Memory tier with handler streaming. The handler output
         is buffered and grounding-checked before anything is
         shown — an ungrounded handler answer must never reach the
-        screen. Returns True when an answer was yielded."""
+        screen. Returns True when an answer was yielded.
+
+        Mirrors _tier_memory: graph first, then the fact-store
+        fallback, then the composer, then library/fuzzy memory.
+        The graph steps used to be missing here, so every
+        module-only fact (countries, etc.) answered in the REPL
+        but failed with [failed] in the TUI, which always streams.
+        """
+        # Graph first (temporal lobe): same as _tier_memory.
+        if self._graph is not None:
+            try:
+                graph_answer = self._graph.answer(query)
+            except Exception:
+                graph_answer = None
+            if graph_answer:
+                self._memory_source = self._graph_answer_source(query)
+                yield ("tag", tag)
+                yield ("block", graph_answer)
+                yield ("stream_end", end("memory", graph_answer))
+                return True
+        if self._graph is None and self._facts is not None:
+            try:
+                fact_answer = self._facts.answer(query)
+            except Exception:
+                fact_answer = None
+            if fact_answer:
+                self._memory_source = "facts"
+                yield ("tag", tag)
+                yield ("block", fact_answer)
+                yield ("stream_end", end("memory", fact_answer))
+                return True
+        # Frontal lobe: composer, same as _tier_memory.
+        composed = self._tier_composer(query)
+        if composed is not None:
+            self._memory_source = "composer"
+            yield ("tag", tag)
+            yield ("block", composed)
+            yield ("stream_end", end("memory", composed))
+            return True
         floor = (self.cfg.vector_min_score
                  if self.memory_kind == "vector"
                  else self.cfg.memory_min_score)
@@ -500,7 +603,8 @@ class Brain:
                 self._memory_source = "library"
         if knowledge is None and self.memory is not None:
             hits = self.memory.search(query, top_k=1)
-            if hits and hits[0][3] >= floor:
+            if hits and hits[0][3] >= floor \
+                    and not _cross_entity_mismatch(query, hits[0][0]):
                 knowledge = hits[0][1]
                 self._memory_source = "knowledge"
         if knowledge is None:
@@ -650,11 +754,84 @@ class Brain:
             return None
         return self.aiml.respond(query)
 
+    def _graph_answer_source(self, query: str) -> str:
+        """Origin of a graph-served fact: "facts" when the same fact
+        is also in the learned fact store, else "graph" (module-only).
+        The trace reports origin, not the serving index."""
+        try:
+            sq = extract_query(query)
+            if sq is not None and self._facts is not None \
+                    and self._graph is not None:
+                subject, predicate = sq
+                stored = self._facts.active(subject, predicate)
+                graph_obj = self._graph.lookup(subject, predicate)
+                if stored is not None and stored.object == graph_obj:
+                    return "facts"
+        except Exception:
+            pass
+        return "graph"
+
+    def _tier_composer(self, query: str) -> str | None:
+        """Frontal lobe: explain questions composed from graph facts
+        (+ a library hit) via the composer. Returns None when the
+        composer declines (unknown intent, no graph entity) — the
+        caller falls through to the library/knowledge path. Compare
+        is not wired yet (the composer's compare needs both entities
+        made explicit by the caller)."""
+        try:
+            from .composer import Composer, Piece, derive_intent
+            intent = derive_intent(query)
+        except Exception:
+            return None
+        if intent is None or intent.action != "explain" \
+                or not intent.entity or self._graph is None:
+            return None
+        try:
+            pieces: list = []
+            ent_lower = intent.entity.lower()
+            for (s, p, o, c, src) in self._graph.all_active():
+                if s.lower() == ent_lower:
+                    pieces.append(Piece(
+                        text=Fact(s, p, o, c, src, 0.0).render(),
+                        source="graph", confidence=c))
+            if not pieces:
+                return None
+            # Library hit as an extra piece (prose the graph lacks).
+            floor = (self.cfg.vector_min_score
+                     if self.memory_kind == "vector"
+                     else self.cfg.memory_min_score)
+            try:
+                lib_hit = self._library_hit(query, floor)
+            except Exception:
+                lib_hit = None
+            if lib_hit:
+                pieces.append(Piece(text=lib_hit, source="library",
+                                    confidence=0.8))
+            composer = Composer(fetch=lambda _intent: pieces)
+            composed = composer.compose(query)
+            if composed is None:
+                return None
+            return composed.text
+        except Exception:
+            return None
+
     def _tier_memory(self, query: str) -> str | None:
-        # Facts first: a (subject, predicate) lookup answers any
-        # phrasing that extracts to the same fact — even a novel
-        # paraphrase the AIML compiler never generated a pattern for.
-        if self._facts is not None:
+        # Graph first (temporal lobe): a (subject, predicate) lookup
+        # answers any phrasing that extracts to the same fact — even
+        # a novel paraphrase. The answer is a stored fact's render,
+        # so it is grounded by construction. memory_source reports
+        # the fact's ORIGIN: "facts" for learned facts, "graph" for
+        # module-only facts.
+        if self._graph is not None:
+            try:
+                graph_answer = self._graph.answer(query)
+            except Exception:
+                graph_answer = None
+            if graph_answer:
+                self._memory_source = self._graph_answer_source(query)
+                return graph_answer
+        if self._graph is None and self._facts is not None:
+            # Graph failed to build: fall back to the fact store.
             try:
                 fact_answer = self._facts.answer(query)
             except Exception:
@@ -662,6 +839,13 @@ class Brain:
             if fact_answer:
                 self._memory_source = "facts"
                 return fact_answer
+        # Frontal lobe: explain questions composed from graph facts
+        # (+ a library hit) via the composer. None = the composer
+        # declined; fall through to the library/knowledge path.
+        composed = self._tier_composer(query)
+        if composed is not None:
+            self._memory_source = "composer"
+            return composed
         floor = (self.cfg.vector_min_score
                  if self.memory_kind == "vector"
                  else self.cfg.memory_min_score)
@@ -680,7 +864,8 @@ class Brain:
                 self._memory_source = "library"
         if knowledge is None and self.memory is not None:
             hits = self.memory.search(query, top_k=1)
-            if hits and hits[0][3] >= floor:
+            if hits and hits[0][3] >= floor \
+                    and not _cross_entity_mismatch(query, hits[0][0]):
                 knowledge = hits[0][1]
                 self._memory_source = "knowledge"
         if knowledge is None:
@@ -775,6 +960,44 @@ class Brain:
                 return f"AIML already answers {existing!r}"
         return None
 
+    def learn_fact(self, question: str, answer: str, score: float,
+                   source: str = "local") -> dict:
+        """Single gate for structured learning.
+
+        The graph checks the fact against module + learned facts
+        (it is a superset of the fact store: modules + replayed
+        learned facts), so a graph pass implies a fact-store pass —
+        the two can never disagree. On pass, the fact is persisted
+        to the fact store. Returns the FactStore.learn result dict
+        (status / existing / fact) so callers keep one shape.
+        """
+        if self._graph is not None:
+            try:
+                status = self._graph.learn(question, answer,
+                                           score=score, source=source)
+            except Exception:
+                status = "pair"
+            if status == "blocked":
+                # Find the conflicting fact for the caller's message.
+                existing = None
+                try:
+                    from .facts import extract as _extract
+                    f = _extract(question, answer)
+                    if f is not None:
+                        for (s, p, o, c, src) in \
+                                self._graph.all_active():
+                            if (s, p) == (f.subject, f.predicate):
+                                existing = Fact(s, p, o, c, src, 0.0)
+                                break
+                except Exception:
+                    existing = None
+                return {"status": "blocked", "existing": existing,
+                        "fact": None}
+        if self._facts is not None:
+            return self._facts.learn(question, answer,
+                                     confidence=score, source=source)
+        return {"status": "pair", "existing": None, "fact": None}
+
     def _learn(self, question: str, answer: str, score: float,
                source: str = "local") -> bool:
         """Persist the STRIPPED pair. Returns True if it stuck.
@@ -804,32 +1027,37 @@ class Brain:
                 except Exception:
                     pass
             return False
-        # --- fact layer ---
-        if self._facts is not None:
-            try:
-                result = self._facts.learn(question, answer,
-                                           confidence=score, source=source)
-                self._fact_status = result["status"]
-                if result["status"] == "blocked":
-                    ex = result["existing"]
-                    self._learn_block_reason = (
-                        f"Fact store already has {ex.subject} "
-                        f"{ex.predicate} = {ex.object}")
-                    if self.gap_log is not None:
-                        try:
-                            self.gap_log.note_gap(question)
-                        except Exception:
-                            pass
-                    return False
-                if result["status"] in ("learned", "superseded") \
-                        and result["fact"] is not None \
-                        and self.aiml is not None:
-                    for pat, tpl in (
-                            (p, result["fact"].render())
-                            for p in result["fact"].patterns()):
-                        self.aiml.learn_compiled(pat, tpl)
-            except Exception:
-                self._fact_status = "error"
+        # --- fact layer (single gate: graph over modules + learned
+        # facts, then persist to the fact store) ---
+        try:
+            result = self.learn_fact(question, answer, score, source)
+            self._fact_status = result["status"]
+        except Exception:
+            result = {"status": "error", "existing": None,
+                      "fact": None}
+            self._fact_status = "error"
+        if result["status"] == "blocked":
+            ex = result.get("existing")
+            if ex is not None:
+                self._learn_block_reason = (
+                    f"Fact store already has {ex.subject} "
+                    f"{ex.predicate} = {ex.object}")
+            else:
+                self._learn_block_reason = (
+                    "fact conflicts with existing knowledge")
+            if self.gap_log is not None:
+                try:
+                    self.gap_log.note_gap(question)
+                except Exception:
+                    pass
+            return False
+        if result["status"] in ("learned", "superseded") \
+                and result.get("fact") is not None \
+                and self.aiml is not None:
+            for pat, tpl in (
+                    (p, result["fact"].render())
+                    for p in result["fact"].patterns()):
+                self.aiml.learn_compiled(pat, tpl)
         q = " ".join(question.split())
         a = " ".join(answer.split())
         if not q or not a or len(q) > 300:

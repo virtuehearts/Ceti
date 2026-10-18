@@ -62,7 +62,7 @@ class BootReport:
         n_ok = sum(1 for c in self.checks if c.status == "ok")
         n_warn = sum(1 for c in self.checks if c.status == "warn")
         n_fail = sum(1 for c in self.checks if c.status == "fail")
-        lines = [_colour.paint("CETI BIOS v0.3.1 — power-on self test",
+        lines = [_colour.paint("CETI BIOS v0.3.3 — power-on self test",
                                _colour.BOLD, _colour.GREEN)]
         tag_colour = {"ok": _colour.GREEN, "warn": _colour.AMBER,
                       "fail": _colour.RED}
@@ -117,25 +117,44 @@ def check_persona(cfg: BrainConfig) -> Check:
 
 def check_aiml(cfg: BrainConfig) -> Check:
     base = os.path.abspath(cfg.data_dir)
-    paths = cfg.aiml_paths()
+    core_paths = cfg.aiml_paths()
     rack = CassetteRack(os.path.join(base, cfg.cassette_dir))
-    paths += rack.load_paths(cfg.cassettes)
+    cassette_paths = rack.load_paths(cfg.cassettes)
     total, files = 0, 0
-    for p in paths:
+    skipped: list[str] = []
+    for p in core_paths:
         if not os.path.exists(p):
             continue
         try:
             root = ET.parse(p).getroot()
         except ET.ParseError as e:
+            # Core files (seed/learned) fail boot: the brain's own
+            # store is corrupt, fail closed.
             return Check("custom local AIML engine", "fail",
                          "unparseable %s: %s" % (p, e))
         total += len(root.findall("category"))
         files += 1
+    for p in cassette_paths:
+        if not os.path.exists(p):
+            continue
+        try:
+            root = ET.parse(p).getroot()
+        except ET.ParseError:
+            # Cassettes are drop-in extensions: one malformed file
+            # must not brick the whole boot. The AIML loader and
+            # the module loader both skip corrupt files the same
+            # way; boot matches them and says so loudly.
+            skipped.append(os.path.basename(p))
+            continue
+        total += len(root.findall("category"))
+        files += 1
     if files == 0:
         return Check("custom local AIML engine", "fail", "no AIML files found")
-    return Check("custom local AIML engine", "ok",
-                 "%d categories across %d files (%d cassettes)"
-                 % (total, files, len(rack.list())))
+    detail = ("%d categories across %d files (%d cassettes)"
+              % (total, files, len(rack.list())))
+    if skipped:
+        detail += " — skipped unreadable cassettes: %s" % ", ".join(skipped)
+    return Check("custom local AIML engine", "ok", detail)
 
 
 def check_identity(cfg: BrainConfig) -> Check:
