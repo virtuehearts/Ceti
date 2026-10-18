@@ -222,3 +222,75 @@ def test_compile_aiml(store):
     assert "WHAT YEAR WAS COMMODORE 64 INTRODUCED" in patterns
     for _p, tpl in pairs:
         assert tpl == "The Commodore 64 was introduced in January 1982."
+
+
+def test_extract_query_bare_when_was_returns_none():
+    # Bare "when was X" has no verb to decide the predicate; it must
+    # return None, not raise (it used to reference an undefined
+    # `answer` variable — a NameError on exactly this shape).
+    assert extract_query("when was the commodore 64") is None
+
+
+# --- possessive + bare-attribute phrasing ---------------------------------
+# A possessive question ("What is France's capital?") used to extract
+# NO fact, so a conflicting fact stated possessively slipped past the
+# conflict gate (module facts included) and past the cross-entity
+# guard, letting one entity's fact be served for another.
+
+def test_extract_possessive_capital():
+    f = extract("What is France's capital?", "France's capital is Berlin.")
+    assert f is not None
+    assert (f.subject, f.predicate, f.object) == ("France", "capital", "Berlin")
+
+
+def test_extract_possessive_capital_of_answer():
+    f = extract("What is France's capital?",
+                "The capital of France is Berlin.")
+    assert f is not None
+    assert (f.subject, f.predicate, f.object) == ("France", "capital", "Berlin")
+
+
+def test_extract_possessive_plural_apostrophe():
+    f = extract("What is the United States' capital?",
+                "The capital of the United States is Washington.")
+    assert f is not None
+    assert (f.subject, f.predicate, f.object) == (
+        "United States", "capital", "Washington")
+
+
+def test_extract_possessive_other_predicates():
+    f = extract("What is Zorbia's population?",
+                "The population of Zorbia is 12 million.")
+    assert f is not None
+    assert (f.subject, f.predicate) == ("Zorbia", "population")
+    f = extract("What is X's RAM?", "X has 64KB of RAM.")
+    assert f is not None
+    assert (f.subject, f.predicate, f.object) == ("X", "ram", "64KB")
+
+
+def test_extract_query_possessive_and_bare():
+    assert extract_query("What is France's capital?") == ("France", "capital")
+    assert extract_query("What is Atlantis's capital?") == ("Atlantis", "capital")
+    assert extract_query("capital of Zorbia?") == ("Zorbia", "capital")
+    assert extract_query("What is the United States' capital?") == (
+        "United States", "capital")
+
+
+def test_extract_query_possessive_is_predicate_untouched():
+    # "What is France's history?" is a generic "is" ask: the subject
+    # stays the whole possessive phrase, so the cross-entity guard
+    # (which skips the generic "is" predicate) keeps working.
+    assert extract_query("What is France's history?") == (
+        "France's History", "is")
+
+
+def test_learn_blocks_possessive_conflict(store):
+    store.learn("What is the capital of France?",
+                "The capital of France is Paris.", source="local")
+    r = store.learn("What is France's capital?",
+                    "France's capital is Berlin.", source="local")
+    assert r["status"] == "blocked"
+    assert r["existing"] is not None
+    assert r["existing"].object == "Paris"
+    assert store.answer("What is France's capital?") == \
+        "The capital of France is Paris."

@@ -189,6 +189,45 @@ class TestBrainStream(unittest.TestCase):
         self.assertNotIn("stream_end", kinds)
         self.assertIsNone(args)
 
+    def test_memory_stream_serves_graph_facts(self):
+        # Parity with ask(): a fact that lives in the graph must
+        # stream. _stream_memory used to skip the graph entirely,
+        # so module-only facts answered in the REPL but failed
+        # with [failed] in the TUI, which always streams.
+        brain = make_stream_brain()
+        brain._learn("What is the capital of Zorbia?",
+                     "The capital of Zorbia is New Zorbia City.", 0.9)
+        events, args = _drain(brain, "What is Zorbia's capital?",
+                              force_tier="memory")
+        self.assertIn(
+            ("block", "The capital of Zorbia is New Zorbia City."),
+            events)
+        ans = brain.finish_stream(args)
+        self.assertEqual(ans.tier, "memory")
+        self.assertIn("New Zorbia City", ans.text)
+
+    def test_stream_serves_module_fact_full_ladder(self):
+        # The exact TUI failure: "What is the capital of France?"
+        # via the full streaming ladder (calc -> aiml -> memory),
+        # with the real countries module loaded.
+        import os
+        import shutil
+        from pathlib import Path
+        tmp = tempfile.mkdtemp()
+        src = Path(__file__).resolve().parents[1] / "data" / "cassettes"
+        shutil.copytree(src, os.path.join(tmp, "cassettes"))
+        cfg = BrainConfig(data_dir=tmp, adjudicate_with_llm=False,
+                          memory_backend="sqlite")
+        brain = Brain(config=cfg,
+                      local_backend=FakeStreamLocal(fail="pre"),
+                      cloud_backends=[])
+        events, args = _drain(brain, "What is the capital of France?")
+        blocks = [p for k, p in events if k == "block"]
+        self.assertTrue(any("Paris" in b for b in blocks), events)
+        ans = brain.finish_stream(args)
+        self.assertEqual(ans.tier, "memory")
+        self.assertIn("Paris", ans.text)
+
 
 # ---------------- TUI streaming ----------------
 

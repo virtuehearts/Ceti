@@ -16,8 +16,8 @@ No accounts. No telemetry. No landlord. It runs on a tired laptop.
 ## Quick start
 
 ```bash
-unzip ceti-0.3.1.zip
-cd ceti-0.3.1
+unzip ceti-0.3.3.zip
+cd ceti-0.3.3
 
 ./install.sh
 source ./ceti-env.sh
@@ -48,7 +48,7 @@ For a non-interactive or minimal install:
 ### After boot
 
 ```
-CETI BIOS v0.3.1 — power-on self test
+CETI BIOS v0.3.3 — power-on self test
 [  ok  ] config     data_dir=...
 [  ok  ] persona    Persona (...)
 [  ok  ] aiml       ... categories ...
@@ -395,7 +395,7 @@ ceti/               core package
   vectormem.py      local embeddings
 data/               persona, seed, learned, cassettes, topics
 skills/             file-ops, sandbox-python, web-fetch, sqlite
-tests/              unit tests (485 green)
+tests/              unit tests (676 green)
 install.sh          one-shot setup
 run.sh              launcher
 ```

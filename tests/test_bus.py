@@ -123,6 +123,86 @@ class TestBusRead(unittest.TestCase):
         self.assertEqual(res.frames, [])
         self.assertEqual(len(res.gaps), 1)
 
+    def test_graph_store_answers_module_facts(self):
+        # The bus must consult the graph/fact store: without it,
+        # module facts (countries) reported as gaps and went to the
+        # oracle even though the brain knew them locally.
+        from types import SimpleNamespace
+
+        class FakeGraph:
+            def answer(self, q):
+                if "capital of france" in q.lower():
+                    return "The capital of France is Paris."
+                return None
+
+            def all_active(self):
+                return [("France", "capital", "Paris", 1.0, "countries")]
+
+        brain = SimpleNamespace(_graph=FakeGraph(), _facts=None)
+        bus = make_bus(aiml=FakeAiml({}), memory=FakeMemory({}),
+                       library=FakeLibrary({}),
+                       cfg=BrainConfig(data_dir=tempfile.mkdtemp()),
+                       brain=brain)
+        res = bus.read("What is the capital of France?")
+        self.assertTrue(res.hit)
+        self.assertEqual(res.frames[0].store, "graph")
+        self.assertIn("Paris", res.frames[0].text)
+        self.assertEqual(res.gaps, [])
+
+    def test_graph_fallback_to_fact_store(self):
+        from types import SimpleNamespace
+
+        class FakeFacts:
+            def answer(self, q):
+                if "capital of france" in q.lower():
+                    return "The capital of France is Paris."
+                return None
+
+        brain = SimpleNamespace(_graph=None, _facts=FakeFacts())
+        bus = make_bus(aiml=FakeAiml({}), memory=FakeMemory({}),
+                       cfg=BrainConfig(data_dir=tempfile.mkdtemp()),
+                       brain=brain)
+        res = bus.read("What is the capital of France?")
+        self.assertTrue(res.hit)
+        self.assertEqual(res.frames[0].store, "graph")
+
+    def test_graph_miss_lists_graph_checked(self):
+        from types import SimpleNamespace
+
+        class FakeGraph:
+            def answer(self, q):
+                return None
+
+            def all_active(self):
+                return []
+
+        brain = SimpleNamespace(_graph=FakeGraph(), _facts=None)
+        bus = make_bus(aiml=FakeAiml({}), memory=FakeMemory({}),
+                       cfg=BrainConfig(data_dir=tempfile.mkdtemp()),
+                       brain=brain)
+        res = bus.read("What is the airspeed of a laden swallow?")
+        self.assertEqual(res.frames, [])
+        self.assertIn("graph", res.gaps[0].stores_checked)
+
+    def test_graph_reader_never_raises(self):
+        from types import SimpleNamespace
+
+        class BadGraph:
+            def answer(self, q):
+                raise RuntimeError("boom")
+
+            def all_active(self):
+                raise RuntimeError("boom")
+
+        brain = SimpleNamespace(_graph=BadGraph(), _facts=None)
+        bus = make_bus(aiml=FakeAiml({}), memory=FakeMemory({}),
+                       cfg=BrainConfig(data_dir=tempfile.mkdtemp()),
+                       brain=brain)
+        res = bus.read("What is the capital of France?")
+        self.assertEqual(res.frames, [])
+        self.assertEqual(len(res.gaps), 1)
+        self.assertEqual(bus.post()["stores"]["graph"], 0)
+
 
 class TestBusCompile(unittest.TestCase):
     def test_compile_hits_plus_gaps(self):

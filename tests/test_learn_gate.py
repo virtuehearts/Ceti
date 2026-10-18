@@ -127,6 +127,35 @@ class TestContradictionCheck(unittest.TestCase):
                           "The C64 was introduced in January 1982."))
         self.assertTrue(c("Paris", "London"))
 
+    def test_possessive_conflict_blocks_learn(self):
+        # Possessive phrasing used to extract NO fact, so a conflicting
+        # fact stated as "Zorbia's capital is ..." slipped past the
+        # fact-layer gate and overwrote the true fact as a raw pair.
+        brain = make_brain(FakeJudgeLocal("x"))
+        ok = brain._learn("What is the capital of Zorbia?",
+                          "The capital of Zorbia is New Zorbia City.",
+                          0.9)
+        self.assertTrue(ok)
+        ok2 = brain._learn("What is Zorbia's capital?",
+                           "Zorbia's capital is Old Town.", 0.9)
+        self.assertFalse(ok2)
+        self.assertEqual(brain._fact_status, "blocked")
+        ans = brain.ask("What is the capital of Zorbia?")
+        self.assertIn("New Zorbia City", ans.text)
+
+    def test_possessive_cross_entity_guard(self):
+        # Asking one entity's possessive question must NOT serve
+        # another entity's fact from the fuzzy memory tier (the
+        # BUG-1 guard failed on possessive queries because extraction
+        # returned None for them).
+        brain = make_brain(FakeJudgeLocal("x"))
+        brain._learn("What is the capital of Zorbia?",
+                     "The capital of Zorbia is New Zorbia City.", 0.9)
+        self.assertIsNone(brain._tier_memory("What is Atlantis's capital?"))
+        # ...while the same-entity possessive ask still answers.
+        self.assertIn("New Zorbia City",
+                      brain._tier_memory("What is Zorbia's capital?") or "")
+
 
 if __name__ == "__main__":
     unittest.main()
